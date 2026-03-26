@@ -29,9 +29,13 @@ import (
 
 var client *whatsmeow.Client
 var container *sqlstore.Container
-var otpDB *sql.DB // نیا SQLite DB کنکشن OTPs کا ریکارڈ رکھنے کے لیے
+var otpDB *sql.DB
 var isFirstRun = true
 var directAPIClient *http.Client
+
+// یہ نیا ویری ایبل شامل کریں
+var currentSessKey string 
+
 
 // ================= HTTP کلائنٹ اور لاگ ان لاجک =================
 
@@ -43,11 +47,14 @@ func initDirectAPIClient() {
 	}
 }
 
+// یہ فنکشن پینل پر لاگ ان کر کے کیپچا اور Session Key (sesskey) خود نکالے گا
 func loginToSMSPanel() bool {
 	fmt.Println("🔄 [Auth] Attempting to login to SMS Panel...")
 	loginURL := "http://185.2.83.39/ints/login"
 	signinURL := "http://185.2.83.39/ints/signin"
+	reportsURL := "http://185.2.83.39/ints/agent/SMSCDRReports"
 
+	// 1. لاگ ان پیج کھولیں
 	resp, err := directAPIClient.Get(loginURL)
 	if err != nil {
 		fmt.Println("❌ [Auth] Login Page Fetch Error:", err)
@@ -57,6 +64,7 @@ func loginToSMSPanel() bool {
 	resp.Body.Close()
 	bodyStr := string(bodyBytes)
 
+	// 2. کیپچا نکالیں
 	re := regexp.MustCompile(`What is (\d+)\s*\+\s*(\d+)\s*=\s*\?`)
 	matches := re.FindStringSubmatch(bodyStr)
 	
@@ -66,10 +74,9 @@ func loginToSMSPanel() bool {
 		num2, _ := strconv.Atoi(matches[2])
 		captchaAnswer = strconv.Itoa(num1 + num2)
 		fmt.Printf("🧠 [Auth] Captcha Solved: %s + %s = %s\n", matches[1], matches[2], captchaAnswer)
-	} else {
-		fmt.Println("⚠️ [Auth] Captcha not found, using fallback answer.")
 	}
 
+	// 3. لاگ ان ریکویسٹ بھیجیں
 	formData := url.Values{}
 	formData.Set("username", "opxali")
 	formData.Set("password", "opxali00")
@@ -85,17 +92,48 @@ func loginToSMSPanel() bool {
 		fmt.Println("❌ [Auth] Signin Error:", err)
 		return false
 	}
-	defer resp2.Body.Close()
+	resp2.Body.Close()
 
-	fmt.Println("✅ [Auth] Successfully Logged into SMS Panel & Session Saved!")
-	return true
+	// 4. لاگ ان ہونے کے بعد SMSCDRReports پیج کھولیں تاکہ sesskey مل سکے
+	fmt.Println("🔍 [Auth] Fetching reports page to extract session key...")
+	reqReports, _ := http.NewRequest("GET", reportsURL, nil)
+	reqReports.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36")
+	
+	respReports, err := directAPIClient.Do(reqReports)
+	if err != nil {
+		fmt.Println("❌ [Auth] Failed to fetch reports page:", err)
+		return false
+	}
+	reportsBody, _ := io.ReadAll(respReports.Body)
+	respReports.Body.Close()
+	reportsStr := string(reportsBody)
+
+	// 5. Regex سے sesskey نکالیں
+	keyRegex := regexp.MustCompile(`sesskey=([a-zA-Z0-9=]+)`)
+	keyMatches := keyRegex.FindStringSubmatch(reportsStr)
+	
+	if len(keyMatches) >= 2 {
+		currentSessKey = keyMatches[1]
+		fmt.Printf("🔑 [Auth] Session Key Found: %s\n", currentSessKey)
+		fmt.Println("✅ [Auth] Successfully Logged into SMS Panel & Session Saved!")
+		return true
+	}
+
+	fmt.Println("⚠️ [Auth] Login successful, but couldn't find sesskey in HTML!")
+	return false
 }
 
+// یہ فنکشن sesskey کے ساتھ ڈائریکٹ پینل سے JSON ڈیٹا لائے گا
 func fetchDirectOTPData() ([]interface{}, bool) {
+	if currentSessKey == "" {
+		return nil, false // اگر sesskey نہیں ہے تو فورا ری-لاگ ان ٹرگر کرو
+	}
+
 	now := time.Now()
 	dateStr := now.Format("2006-01-02")
 	
-	fetchURL := fmt.Sprintf("http://185.2.83.39/ints/agent/res/data_smscdr.php?fdate1=%s%%2000:00:00&fdate2=%s%%2023:59:59&sEcho=1&iColumns=9&iDisplayStart=0&iDisplayLength=25", dateStr, dateStr)
+	// sesskey کو URL میں شامل کر دیا گیا ہے
+	fetchURL := fmt.Sprintf("http://185.2.83.39/ints/agent/res/data_smscdr.php?fdate1=%s%%2000:00:00&fdate2=%s%%2023:59:59&sEcho=1&iColumns=9&iDisplayStart=0&iDisplayLength=25&sesskey=%s", dateStr, dateStr, currentSessKey)
 
 	req, _ := http.NewRequest("GET", fetchURL, nil)
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
@@ -104,7 +142,7 @@ func fetchDirectOTPData() ([]interface{}, bool) {
 	resp, err := directAPIClient.Do(req)
 	if err != nil {
 		fmt.Printf("❌ [API] Network Error: %v\n", err)
-		return nil, false // false means error / expired
+		return nil, false
 	}
 	defer resp.Body.Close()
 
@@ -114,17 +152,16 @@ func fetchDirectOTPData() ([]interface{}, bool) {
 
 	var data map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		fmt.Println("❌ [API] Failed to parse JSON. Possible session expiration.")
+		fmt.Println("❌ [API] Failed to parse JSON. Session might be expired.")
 		return nil, false
 	}
 	
 	if data != nil && data["aaData"] != nil {
 		return data["aaData"].([]interface{}), true
 	}
-	return nil, true // Successfully fetched, but array is totally empty
+	return nil, true // Successfully fetched, but array is empty
 }
 
-// ================= SQLite ڈیٹا بیس Setup =================
 
 func initSQLiteDB() {
 	var err error
