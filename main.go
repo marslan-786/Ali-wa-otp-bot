@@ -230,6 +230,8 @@ func cleanCountryName(name string) string {
 
 // ================= Monitoring Loop =================
 
+// ================= Monitoring Loop =================
+
 func checkOTPs(cli *whatsmeow.Client) {
 	if !cli.IsConnected() || !cli.IsLoggedIn() {
 		return
@@ -247,25 +249,85 @@ func checkOTPs(cli *whatsmeow.Client) {
 	}
 
 	if len(aaData) == 0 {
-		fmt.Println("ℹ️ [API] API called successfully, but no new messages found.")
+		fmt.Println("ℹ️ [API] API called successfully, but no data array found.")
 		return
 	}
 
-	fmt.Printf("📥 [API] Data received: %d rows found. Processing...\n", len(aaData))
-
+	// ---------------- بوٹ سٹارٹ اپ کا حصہ ----------------
 	if isFirstRun {
-		fmt.Println("🚀 [Boot] First run detected, caching old messages to avoid spamming...")
-		for _, row := range aaData {
-			r := row.([]interface{})
-			msgID := fmt.Sprintf("%v_%v", r[2], r[0])
+		fmt.Println("🚀 [Boot] First run detected, sending 1 latest message to channel and caching the rest...")
+		
+		for i, row := range aaData {
+			r, ok := row.([]interface{})
+			if !ok || len(r) < 6 {
+				continue
+			}
+
+			rawTime := fmt.Sprintf("%v", r[0])
+			countryRaw := fmt.Sprintf("%v", r[1])
+			phone := fmt.Sprintf("%v", r[2])
+			service := fmt.Sprintf("%v", r[3])
+			fullMsg := fmt.Sprintf("%v", r[5]) 
+			msgID := fmt.Sprintf("%v_%v", phone, rawTime)
+
+			// صرف پہلی بار، لسٹ کا پہلا میسج (latest) چینل پر بھیجو
+			if i == 0 {
+				fmt.Println("🔔 [Boot] Sending the latest OTP to channel as an active status check...")
+				cleanCountry := cleanCountryName(countryRaw)
+				cFlag, _ := GetCountryWithFlag(cleanCountry)
+				otpCode := extractOTP(fullMsg)
+				maskedPhone := maskPhoneNumber(phone)
+				flatMsg := strings.ReplaceAll(strings.ReplaceAll(fullMsg, "\n", " "), "\r", "")
+
+				// اس میسج پر 'Bot Started' کا ٹیگ لگا دیا گیا ہے
+				messageBody := fmt.Sprintf("🟢 *Bot Started / Active Check* 🟢\n\n✨ *%s | %s Message* ⚡\n\n"+
+					"> *Time:* %s\n"+
+					"> *Country:* %s %s\n"+
+					"   *Number:* *%s*\n"+
+					"> *Service:* %s\n"+
+					"   *OTP:* *%s*\n\n"+
+					"> *Join For Numbers:* \n"+
+					"> ¹ https://chat.whatsapp.com/EbaJKbt5J2T6pgENIeFFht\n"+
+					"*Full Message:*\n"+
+					"%s\n\n"+
+					"> © Developed by Nothing Is Impossible",
+					cFlag, strings.ToUpper(service),
+					rawTime, cFlag, cleanCountry, maskedPhone, service, otpCode, flatMsg)
+
+				for _, jidStr := range Config.OTPChannelIDs {
+					jid, err := types.ParseJID(jidStr)
+					if err != nil {
+						fmt.Printf("❌ [Error] Invalid Channel ID Format '%s': %v\n", jidStr, err)
+						continue
+					}
+
+					_, err = cli.SendMessage(context.Background(), jid, &waProto.Message{
+						Conversation: proto.String(strings.TrimSpace(messageBody)),
+					})
+					
+					if err != nil {
+						fmt.Printf("❌ [Boot Send Error] Failed to send OTP to Channel [%s]: %v\n", jidStr, err)
+					} else {
+						fmt.Printf("✅ [Boot Sent] Startup OTP successfully forwarded to Channel [%s]\n", jidStr)
+					}
+					time.Sleep(1 * time.Second)
+				}
+			}
+
+			// چاہے بھیجا ہو یا نہیں، ڈیٹا بیس میں سیو کر لو تاکہ دوبارہ نہ جائے
 			if !isAlreadySent(msgID) {
 				markAsSent(msgID)
 			}
 		}
+		
 		isFirstRun = false
-		fmt.Println("✅ [Boot] Old messages cached.")
+		fmt.Printf("✅ [Boot] 1 message sent and %d old messages cached successfully.\n", len(aaData))
 		return
 	}
+	// ---------------------------------------------------
+
+	fmt.Printf("📥 [API] Data received: %d rows found. Checking for new messages...\n", len(aaData))
+	newMsgsCount := 0
 
 	for _, row := range aaData {
 		r, ok := row.([]interface{})
@@ -285,39 +347,59 @@ func checkOTPs(cli *whatsmeow.Client) {
 
 		msgID := fmt.Sprintf("%v_%v", phone, rawTime)
 
-		if !isAlreadySent(msgID) {
-			cleanCountry := cleanCountryName(countryRaw)
-			cFlag, _ := GetCountryWithFlag(cleanCountry)
-			otpCode := extractOTP(fullMsg)
-			maskedPhone := maskPhoneNumber(phone)
-			flatMsg := strings.ReplaceAll(strings.ReplaceAll(fullMsg, "\n", " "), "\r", "")
-
-			messageBody := fmt.Sprintf("✨ *%s | %s Message* ⚡\n\n"+
-				"> *Time:* %s\n"+
-				"> *Country:* %s %s\n"+
-				"   *Number:* *%s*\n"+
-				"> *Service:* %s\n"+
-				"   *OTP:* *%s*\n\n"+
-				"> *Join For Numbers:* \n"+
-				"> ¹ https://chat.whatsapp.com/EbaJKbt5J2T6pgENIeFFht\n"+
-				"*Full Message:*\n"+
-				"%s\n\n"+
-				"> © Developed by Nothing Is Impossible",
-				cFlag, strings.ToUpper(service),
-				rawTime, cFlag, cleanCountry, maskedPhone, service, otpCode, flatMsg)
-
-			for _, jidStr := range Config.OTPChannelIDs {
-				jid, _ := types.ParseJID(jidStr)
-				cli.SendMessage(context.Background(), jid, &waProto.Message{
-					Conversation: proto.String(strings.TrimSpace(messageBody)),
-				})
-				time.Sleep(1 * time.Second)
-			}
-			markAsSent(msgID)
-			fmt.Printf("📤 [Sent] OTP Forwarded to WhatsApp for: %s\n", phone)
+		if isAlreadySent(msgID) {
+			continue
 		}
+
+		newMsgsCount++
+		cleanCountry := cleanCountryName(countryRaw)
+		cFlag, _ := GetCountryWithFlag(cleanCountry)
+		otpCode := extractOTP(fullMsg)
+		maskedPhone := maskPhoneNumber(phone)
+		flatMsg := strings.ReplaceAll(strings.ReplaceAll(fullMsg, "\n", " "), "\r", "")
+
+		messageBody := fmt.Sprintf("✨ *%s | %s Message* ⚡\n\n"+
+			"> *Time:* %s\n"+
+			"> *Country:* %s %s\n"+
+			"   *Number:* *%s*\n"+
+			"> *Service:* %s\n"+
+			"   *OTP:* *%s*\n\n"+
+			"> *Join For Numbers:* \n"+
+			"> ¹ https://whatsapp.com/channel/0029VbClXwrATRSmvUg4F43l\n"+
+			"*Full Message:*\n"+
+			"%s\n\n"+
+			"> © Developed by Nothing Is Impossible",
+			cFlag, strings.ToUpper(service),
+			rawTime, cFlag, cleanCountry, maskedPhone, service, otpCode, flatMsg)
+
+		for _, jidStr := range Config.OTPChannelIDs {
+			jid, err := types.ParseJID(jidStr)
+			if err != nil {
+				fmt.Printf("❌ [Error] Invalid Channel ID Format '%s': %v\n", jidStr, err)
+				continue
+			}
+
+			_, err = cli.SendMessage(context.Background(), jid, &waProto.Message{
+				Conversation: proto.String(strings.TrimSpace(messageBody)),
+			})
+			
+			if err != nil {
+				fmt.Printf("❌ [Send Error] Failed to send OTP for %s to Channel [%s]: %v\n", phone, jidStr, err)
+			} else {
+				fmt.Printf("✅ [Sent] OTP for %s successfully forwarded to Channel [%s]\n", phone, jidStr)
+			}
+			time.Sleep(1 * time.Second) 
+		}
+		markAsSent(msgID) 
+	}
+
+	if newMsgsCount == 0 {
+		fmt.Println("ℹ️ [Process] No NEW messages found. All current messages are already cached.")
+	} else {
+		fmt.Printf("🎉 [Process] Successfully processed and forwarded %d NEW messages!\n", newMsgsCount)
 	}
 }
+
 
 // ================= WhatsApp Events & Handlers =================
 
