@@ -39,7 +39,6 @@ var currentSessKeyPanel1 string
 
 // ================= API (Number Panel) کے ویری ایبلز =================
 var isFirstRunAPI = true
-const API_URL = "https://api-ali-nodejs-production.up.railway.app/api?type=sms"
 
 // ================= HTTP کلائنٹ Setup =================
 func initClients() {
@@ -50,17 +49,17 @@ func initClients() {
 	}
 }
 
-// ================= پینل 1 (SMS Hadi - Hardcoded Login) =================
+// ================= پینل 1 (SMS Hadi) =================
 
 func loginToPanel1() bool {
-	fmt.Println("🔄 [Auth-P1] Attempting to login to SMS Hadi Panel...")
+	fmt.Println("🔄 [Auth-Hadi] Attempting to login to SMS Hadi Panel...")
 	loginURL := "http://185.2.83.39/ints/login"
 	signinURL := "http://185.2.83.39/ints/signin"
 	reportsURL := "http://185.2.83.39/ints/agent/SMSCDRReports"
 
 	resp, err := directAPIClient.Get(loginURL)
 	if err != nil {
-		fmt.Println("❌ [Auth-P1] Login Page Fetch Error:", err)
+		fmt.Println("❌ [Auth-Hadi] Login Page Fetch Error:", err)
 		return false
 	}
 	bodyBytes, _ := io.ReadAll(resp.Body)
@@ -74,7 +73,7 @@ func loginToPanel1() bool {
 		num1, _ := strconv.Atoi(matches[1])
 		num2, _ := strconv.Atoi(matches[2])
 		captchaAnswer = strconv.Itoa(num1 + num2)
-		fmt.Printf("🧠 [Auth-P1] Captcha Solved: %s + %s = %s\n", matches[1], matches[2], captchaAnswer)
+		fmt.Printf("🧠 [Auth-Hadi] Captcha Solved: %s + %s = %s\n", matches[1], matches[2], captchaAnswer)
 	}
 
 	formData := url.Values{}
@@ -89,7 +88,7 @@ func loginToPanel1() bool {
 
 	resp2, err := directAPIClient.Do(req)
 	if err != nil {
-		fmt.Println("❌ [Auth-P1] Signin Error:", err)
+		fmt.Println("❌ [Auth-Hadi] Signin Error:", err)
 		return false
 	}
 	resp2.Body.Close()
@@ -105,14 +104,13 @@ func loginToPanel1() bool {
 		keyMatches := keyRegex.FindStringSubmatch(string(reportsBody))
 		if len(keyMatches) >= 2 {
 			currentSessKeyPanel1 = keyMatches[1]
-			fmt.Println("✅ [Auth-P1] Successfully Logged in & Session Saved!")
+			fmt.Println("✅ [Auth-Hadi] Successfully Logged in & Session Saved!")
 			return true
 		}
 	}
 	return false
 }
 
-// یہ وہ فنکشن ہے جو بوٹ ہر 5 سیکنڈ بعد کال کرتا ہے
 func fetchPanel1Data() ([]interface{}, bool) {
 	if currentSessKeyPanel1 == "" {
 		return nil, false
@@ -121,7 +119,6 @@ func fetchPanel1Data() ([]interface{}, bool) {
 	now := time.Now()
 	dateStr := now.Format("2006-01-02")
 	
-	// اس میں بوٹ کے لیے بھی Sorting پیرامیٹرز موجود ہیں
 	params := url.Values{}
 	params.Set("fdate1", dateStr+" 00:00:00")
 	params.Set("fdate2", dateStr+" 23:59:59")
@@ -158,14 +155,14 @@ func fetchPanel1Data() ([]interface{}, bool) {
 	params.Set("sSearch", "")
 	params.Set("bRegex", "false")
 	params.Set("iSortCol_0", "0")
-	params.Set("sSortDir_0", "desc") // Descending Order (نئے میسج سب سے اوپر)
+	params.Set("sSortDir_0", "desc")
 	params.Set("iSortingCols", "1")
 
 	fetchURL := "http://185.2.83.39/ints/agent/res/data_smscdr.php?" + params.Encode()
 
 	req, _ := http.NewRequest("GET", fetchURL, nil)
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 10)")
 
 	resp, err := directAPIClient.Do(req)
 	if err != nil {
@@ -190,7 +187,13 @@ func fetchPanel1Data() ([]interface{}, bool) {
 // ================= API 2 (Number Panel API Direct) =================
 
 func fetchNumberPanelAPI() ([]interface{}, bool) {
-	req, _ := http.NewRequest("GET", API_URL, nil)
+	now := time.Now()
+	dateStr := now.Format("2006-01-02")
+	
+	token := "R1dSSkdBUzRzhHFSf4SMh2FsUVyIZYpiU5GNYkp4aHNVUVVleJSRSA=="
+	fetchURL := fmt.Sprintf("http://147.135.212.197/crapi/st/viewstats?token=%s&dt1=%s%%2000:00:00&dt2=%s%%2023:59:59&records=50", token, dateStr, dateStr)
+
+	req, _ := http.NewRequest("GET", fetchURL, nil)
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 10)")
 	
 	client := &http.Client{Timeout: 10 * time.Second}
@@ -201,14 +204,23 @@ func fetchNumberPanelAPI() ([]interface{}, bool) {
 	}
 	defer resp.Body.Close()
 
-	var data map[string]interface{}
+	var data [][]string // New structure: Array of Arrays of Strings
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		fmt.Printf("❌ [API-Parse Error]: %v\n", err)
 		return nil, false
 	}
-	if aaData, ok := data["aaData"]; ok && aaData != nil {
-		return aaData.([]interface{}), true
+
+	// Convert string arrays to interface{} arrays so our common sender logic can use it
+	var interfaceData []interface{}
+	for _, rowStr := range data {
+		var rowInterface []interface{}
+		for _, val := range rowStr {
+			rowInterface = append(rowInterface, val)
+		}
+		interfaceData = append(interfaceData, rowInterface)
 	}
-	return nil, true
+
+	return interfaceData, true
 }
 
 // ================= DEBUG API ROUTES =================
@@ -280,7 +292,12 @@ func handleCheckPanel1(w http.ResponseWriter, r *http.Request) {
 
 func handleCheckAPI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	req, _ := http.NewRequest("GET", API_URL, nil)
+	now := time.Now()
+	dateStr := now.Format("2006-01-02")
+	token := "R1dSSkdBUzRzhHFSf4SMh2FsUVyIZYpiU5GNYkp4aHNVUVVleJSRSA=="
+	fetchURL := fmt.Sprintf("http://147.135.212.197/crapi/st/viewstats?token=%s&dt1=%s%%2000:00:00&dt2=%s%%2023:59:59&records=50", token, dateStr, dateStr)
+
+	req, _ := http.NewRequest("GET", fetchURL, nil)
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 10)")
 	
 	client := &http.Client{Timeout: 10 * time.Second}
@@ -356,13 +373,13 @@ func cleanCountryName(name string) string {
 	return "Unknown"
 }
 
-// ================= Monitoring Loop (Panel 1) =================
+// ================= Monitoring Loop (Panel 1 - SMS Hadi) =================
 
 func checkPanel1OTPs(cli *whatsmeow.Client) {
 	aaData, success := fetchPanel1Data()
 	
 	if !success {
-		fmt.Println("⚠️ [P1] Session Expired. Triggering Re-login...")
+		fmt.Println("⚠️ [Hadi] Session Expired. Triggering Re-login...")
 		loginToPanel1()
 		return
 	}
@@ -372,22 +389,22 @@ func checkPanel1OTPs(cli *whatsmeow.Client) {
 	}
 
 	if isFirstRunPanel1 {
-		fmt.Println("🚀 [P1-Boot] Caching old messages...")
+		fmt.Println("🚀 [Hadi-Boot] Caching old messages...")
 		for i, row := range aaData {
 			r, ok := row.([]interface{})
 			if !ok || len(r) < 6 { continue }
 
 			rawTime := fmt.Sprintf("%v", r[0])
 			phone := fmt.Sprintf("%v", r[2])
-			msgID := fmt.Sprintf("P1_%v_%v", phone, rawTime)
+			msgID := fmt.Sprintf("H_%v_%v", phone, rawTime)
 
 			if i == 0 { 
-				sendWhatsAppMessage(cli, r, msgID, true, 5) 
+				sendWhatsAppMessage(cli, r[0].(string), r[1].(string), r[2].(string), r[3].(string), r[5].(string), msgID, true, "H") 
 			}
 			markAsSent(msgID)
 		}
 		isFirstRunPanel1 = false
-		fmt.Printf("✅ [P1-Boot] %d old messages cached.\n", len(aaData))
+		fmt.Printf("✅ [Hadi-Boot] %d old messages cached.\n", len(aaData))
 		return
 	}
 
@@ -398,16 +415,16 @@ func checkPanel1OTPs(cli *whatsmeow.Client) {
 
 		rawTime := fmt.Sprintf("%v", r[0])
 		phone := fmt.Sprintf("%v", r[2])
-		msgID := fmt.Sprintf("P1_%v_%v", phone, rawTime)
+		msgID := fmt.Sprintf("H_%v_%v", phone, rawTime)
 
 		if isAlreadySent(msgID) { continue }
 
 		newMsgsCount++
-		sendWhatsAppMessage(cli, r, msgID, false, 5) 
+		sendWhatsAppMessage(cli, r[0].(string), r[1].(string), r[2].(string), r[3].(string), r[5].(string), msgID, false, "H") 
 	}
 
 	if newMsgsCount > 0 {
-		fmt.Printf("🎉 [P1] Processed %d NEW messages!\n", newMsgsCount)
+		fmt.Printf("🎉 [Hadi] Processed %d NEW messages!\n", newMsgsCount)
 	}
 }
 
@@ -421,54 +438,55 @@ func checkAPIOTPs(cli *whatsmeow.Client) {
 	}
 
 	if isFirstRunAPI {
-		fmt.Println("🚀 [API-Boot] Caching old messages...")
+		fmt.Println("🚀 [NP-Boot] Caching old messages...")
 		for i, row := range aaData {
 			r, ok := row.([]interface{})
-			if !ok || len(r) < 5 { continue }
+			if !ok || len(r) < 4 { continue }
 
-			rawTime := fmt.Sprintf("%v", r[0])
-			phone := fmt.Sprintf("%v", r[2])
-			msgID := fmt.Sprintf("API_%v_%v", phone, rawTime) 
+			// NP API Structure: ["Whatsapp","584268113660","Message...","2026-03-26 13:55:03"]
+			service := fmt.Sprintf("%v", r[0])
+			phone := fmt.Sprintf("%v", r[1])
+			fullMsg := fmt.Sprintf("%v", r[2])
+			rawTime := fmt.Sprintf("%v", r[3])
+
+			msgID := fmt.Sprintf("NP_%v_%v", phone, rawTime) 
 
 			if i == 0 { 
-				sendWhatsAppMessage(cli, r, msgID, true, 4) 
+				sendWhatsAppMessage(cli, rawTime, "Unknown", phone, service, fullMsg, msgID, true, "NP") 
 			}
 			markAsSent(msgID)
 		}
 		isFirstRunAPI = false
-		fmt.Printf("✅ [API-Boot] %d old messages cached.\n", len(aaData))
+		fmt.Printf("✅ [NP-Boot] %d old messages cached.\n", len(aaData))
 		return
 	}
 
 	newMsgsCount := 0
 	for _, row := range aaData {
 		r, ok := row.([]interface{})
-		if !ok || len(r) < 5 { continue }
+		if !ok || len(r) < 4 { continue }
 
-		rawTime := fmt.Sprintf("%v", r[0])
-		phone := fmt.Sprintf("%v", r[2])
-		msgID := fmt.Sprintf("API_%v_%v", phone, rawTime)
+		service := fmt.Sprintf("%v", r[0])
+		phone := fmt.Sprintf("%v", r[1])
+		fullMsg := fmt.Sprintf("%v", r[2])
+		rawTime := fmt.Sprintf("%v", r[3])
+
+		msgID := fmt.Sprintf("NP_%v_%v", phone, rawTime)
 
 		if isAlreadySent(msgID) { continue }
 
 		newMsgsCount++
-		sendWhatsAppMessage(cli, r, msgID, false, 4) 
+		sendWhatsAppMessage(cli, rawTime, "Unknown", phone, service, fullMsg, msgID, false, "NP") 
 	}
 
 	if newMsgsCount > 0 {
-		fmt.Printf("🎉 [API] Processed %d NEW messages!\n", newMsgsCount)
+		fmt.Printf("🎉 [NP] Processed %d NEW messages!\n", newMsgsCount)
 	}
 }
 
 // ================= Common WhatsApp Sender =================
 
-func sendWhatsAppMessage(cli *whatsmeow.Client, r []interface{}, msgID string, isBootMsg bool, msgIndex int) {
-	rawTime := fmt.Sprintf("%v", r[0])
-	countryRaw := fmt.Sprintf("%v", r[1])
-	phone := fmt.Sprintf("%v", r[2])
-	service := fmt.Sprintf("%v", r[3])
-	
-	fullMsg := fmt.Sprintf("%v", r[msgIndex])
+func sendWhatsAppMessage(cli *whatsmeow.Client, rawTime, countryRaw, phone, service, fullMsg, msgID string, isBootMsg bool, panelSource string) {
 	fullMsg = html.UnescapeString(fullMsg)
 	fullMsg = strings.ReplaceAll(fullMsg, "null", "")
 	flatMsg := strings.ReplaceAll(strings.ReplaceAll(fullMsg, "\n", " "), "\r", "")
@@ -480,7 +498,8 @@ func sendWhatsAppMessage(cli *whatsmeow.Client, r []interface{}, msgID string, i
 	otpCode := extractOTP(fullMsg)
 	maskedPhone := maskPhoneNumber(phone)
 
-	header := fmt.Sprintf("✨ *%s | %s Message* ⚡\n\n", cFlag, strings.ToUpper(service))
+	// Panel Identifier (H یا NP) ہیڈر میں ایڈ کیا گیا ہے
+	header := fmt.Sprintf("✨ *%s | %s Message* ⚡ [%s]\n\n", cFlag, strings.ToUpper(service), panelSource)
 	if isBootMsg {
 		header = "🟢 *Bot Started / Active Check* 🟢\n\n" + header
 	}
@@ -718,13 +737,13 @@ func main() {
 		}
 	}()
 
-	// ================= API Loop (10 Seconds) =================
+	// ================= API Loop (5 Seconds) =================
 	go func() {
 		for {
 			if client != nil && client.IsLoggedIn() {
 				checkAPIOTPs(client)
 			}
-			time.Sleep(10 * time.Second)
+			time.Sleep(5 * time.Second)
 		}
 	}()
 
