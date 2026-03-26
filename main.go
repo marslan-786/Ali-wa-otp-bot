@@ -112,21 +112,60 @@ func loginToPanel1() bool {
 	return false
 }
 
+// یہ وہ فنکشن ہے جو بوٹ ہر 5 سیکنڈ بعد کال کرتا ہے
 func fetchPanel1Data() ([]interface{}, bool) {
 	if currentSessKeyPanel1 == "" {
 		return nil, false
 	}
 	
-	// Date Now Logic: 00:00:00 to 23:59:59 of Current Day
 	now := time.Now()
 	dateStr := now.Format("2006-01-02")
 	
-	// FIX: Added Sorting Parameters (&iSortCol_0=0&sSortDir_0=desc&iSortingCols=1) to get LATEST messages first
-	fetchURL := fmt.Sprintf("http://185.2.83.39/ints/agent/res/data_smscdr.php?fdate1=%s%%2000:00:00&fdate2=%s%%2023:59:59&sEcho=1&iColumns=9&iDisplayStart=0&iDisplayLength=25&iSortCol_0=0&sSortDir_0=desc&iSortingCols=1&sesskey=%s", dateStr, dateStr, currentSessKeyPanel1)
+	// اس میں بوٹ کے لیے بھی Sorting پیرامیٹرز موجود ہیں
+	params := url.Values{}
+	params.Set("fdate1", dateStr+" 00:00:00")
+	params.Set("fdate2", dateStr+" 23:59:59")
+	params.Set("frange", "")
+	params.Set("fclient", "")
+	params.Set("fnum", "")
+	params.Set("fcli", "")
+	params.Set("fgdate", "")
+	params.Set("fgmonth", "")
+	params.Set("fgrange", "")
+	params.Set("fgclient", "")
+	params.Set("fgnumber", "")
+	params.Set("fgcli", "")
+	params.Set("fg", "0")
+	params.Set("sesskey", currentSessKeyPanel1)
+	params.Set("sEcho", "2")
+	params.Set("iColumns", "9")
+	params.Set("sColumns", ",,,,,,,,")
+	params.Set("iDisplayStart", "0")
+	params.Set("iDisplayLength", "50")
+
+	for i := 0; i < 9; i++ {
+		idx := strconv.Itoa(i)
+		params.Set("mDataProp_"+idx, idx)
+		params.Set("sSearch_"+idx, "")
+		params.Set("bRegex_"+idx, "false")
+		params.Set("bSearchable_"+idx, "true")
+		if i == 8 {
+			params.Set("bSortable_"+idx, "false")
+		} else {
+			params.Set("bSortable_"+idx, "true")
+		}
+	}
+	params.Set("sSearch", "")
+	params.Set("bRegex", "false")
+	params.Set("iSortCol_0", "0")
+	params.Set("sSortDir_0", "desc") // Descending Order (نئے میسج سب سے اوپر)
+	params.Set("iSortingCols", "1")
+
+	fetchURL := "http://185.2.83.39/ints/agent/res/data_smscdr.php?" + params.Encode()
 
 	req, _ := http.NewRequest("GET", fetchURL, nil)
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 10)")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36")
 
 	resp, err := directAPIClient.Do(req)
 	if err != nil {
@@ -183,11 +222,51 @@ func handleCheckPanel1(w http.ResponseWriter, r *http.Request) {
 	
 	now := time.Now()
 	dateStr := now.Format("2006-01-02")
-	fetchURL := fmt.Sprintf("http://185.2.83.39/ints/agent/res/data_smscdr.php?fdate1=%s%%2000:00:00&fdate2=%s%%2023:59:59&sEcho=1&iColumns=9&iDisplayStart=0&iDisplayLength=25&iSortCol_0=0&sSortDir_0=desc&iSortingCols=1&sesskey=%s", dateStr, dateStr, currentSessKeyPanel1)
+	
+	params := url.Values{}
+	params.Set("fdate1", dateStr+" 00:00:00")
+	params.Set("fdate2", dateStr+" 23:59:59")
+	params.Set("frange", "")
+	params.Set("fclient", "")
+	params.Set("fnum", "")
+	params.Set("fcli", "")
+	params.Set("fgdate", "")
+	params.Set("fgmonth", "")
+	params.Set("fgrange", "")
+	params.Set("fgclient", "")
+	params.Set("fgnumber", "")
+	params.Set("fgcli", "")
+	params.Set("fg", "0")
+	params.Set("sesskey", currentSessKeyPanel1)
+	params.Set("sEcho", "2")
+	params.Set("iColumns", "9")
+	params.Set("sColumns", ",,,,,,,,")
+	params.Set("iDisplayStart", "0")
+	params.Set("iDisplayLength", "50")
+
+	for i := 0; i < 9; i++ {
+		idx := strconv.Itoa(i)
+		params.Set("mDataProp_"+idx, idx)
+		params.Set("sSearch_"+idx, "")
+		params.Set("bRegex_"+idx, "false")
+		params.Set("bSearchable_"+idx, "true")
+		if i == 8 {
+			params.Set("bSortable_"+idx, "false")
+		} else {
+			params.Set("bSortable_"+idx, "true")
+		}
+	}
+	params.Set("sSearch", "")
+	params.Set("bRegex", "false")
+	params.Set("iSortCol_0", "0")
+	params.Set("sSortDir_0", "desc")
+	params.Set("iSortingCols", "1")
+
+	fetchURL := "http://185.2.83.39/ints/agent/res/data_smscdr.php?" + params.Encode()
 
 	req, _ := http.NewRequest("GET", fetchURL, nil)
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 10)")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36")
 
 	resp, err := directAPIClient.Do(req)
 	if err != nil {
@@ -280,7 +359,6 @@ func cleanCountryName(name string) string {
 // ================= Monitoring Loop (Panel 1) =================
 
 func checkPanel1OTPs(cli *whatsmeow.Client) {
-	fmt.Println("📡 [P1] Calling SMS Hadi API...")
 	aaData, success := fetchPanel1Data()
 	
 	if !success {
@@ -336,7 +414,6 @@ func checkPanel1OTPs(cli *whatsmeow.Client) {
 // ================= Monitoring Loop (Number Panel API Direct) =================
 
 func checkAPIOTPs(cli *whatsmeow.Client) {
-	fmt.Println("📡 [API] Calling Direct API...")
 	aaData, success := fetchNumberPanelAPI()
 	
 	if !success || len(aaData) == 0 {
