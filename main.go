@@ -473,7 +473,7 @@ func sendWhatsAppMessage(cli *whatsmeow.Client, r []interface{}, msgID string, i
 		"> *Service:* %s\n"+
 		"   *OTP:* *%s*\n\n"+
 		"> *Join For Numbers:* \n"+
-		"> ¹ https://whatsapp.com/channel/0029VbClXwrATRSmvUg4F43l\1n"+
+		"> ¹ https://whatsapp.com/channel/0029VbClXwrATRSmvUg4F43l\n"+
 		"*Full Message:*\n"+
 		"%s\n\n"+
 		"> © Developed by Nothing Is Impossible",
