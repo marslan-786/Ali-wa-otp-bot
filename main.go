@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -33,37 +32,28 @@ var client *whatsmeow.Client
 var container *sqlstore.Container
 var otpDB *sql.DB 
 
-// ================= پینل 1 کے ویری ایبلز =================
+// ================= پینل 1 (SMS Hadi) کے ویری ایبلز =================
 var isFirstRunPanel1 = true
 var directAPIClient *http.Client
 var currentSessKeyPanel1 string 
 
-// ================= پینل 2 (Number Panel) کے ویری ایبلز =================
-var isFirstRunPanel2 = true
-var npAPIClient *http.Client
-var currentSessKeyPanel2 string
-const NPBaseURL = "http://51.89.99.105/NumberPanel"
+// ================= API (Number Panel) کے ویری ایبلز =================
+var isFirstRunAPI = true
+const API_URL = "https://api-ali-nodejs-production.up.railway.app/api?type=sms"
 
-// ================= HTTP کلائنٹس Setup =================
-
+// ================= HTTP کلائنٹ Setup =================
 func initClients() {
 	jar1, _ := cookiejar.New(nil)
 	directAPIClient = &http.Client{
 		Jar:     jar1,
 		Timeout: 15 * time.Second,
 	}
-
-	jar2, _ := cookiejar.New(nil)
-	npAPIClient = &http.Client{
-		Jar:     jar2,
-		Timeout: 15 * time.Second,
-	}
 }
 
-// ================= پینل 1 (SMS Hadi) کی لاجک =================
+// ================= پینل 1 (SMS Hadi - Hardcoded Login) =================
 
 func loginToPanel1() bool {
-	fmt.Println("🔄 [Auth-P1] Attempting to login to Panel 1 (SMS Hadi)...")
+	fmt.Println("🔄 [Auth-P1] Attempting to login to SMS Hadi Panel...")
 	loginURL := "http://185.2.83.39/ints/login"
 	signinURL := "http://185.2.83.39/ints/signin"
 	reportsURL := "http://185.2.83.39/ints/agent/SMSCDRReports"
@@ -126,6 +116,8 @@ func fetchPanel1Data() ([]interface{}, bool) {
 	if currentSessKeyPanel1 == "" {
 		return nil, false
 	}
+	
+	// Date Now Logic: 00:00:00 to 23:59:59 of Current Day
 	now := time.Now()
 	dateStr := now.Format("2006-01-02")
 	fetchURL := fmt.Sprintf("http://185.2.83.39/ints/agent/res/data_smscdr.php?fdate1=%s%%2000:00:00&fdate2=%s%%2023:59:59&sEcho=1&iColumns=9&iDisplayStart=0&iDisplayLength=25&sesskey=%s", dateStr, dateStr, currentSessKeyPanel1)
@@ -154,109 +146,26 @@ func fetchPanel1Data() ([]interface{}, bool) {
 	return nil, true
 }
 
-// ================= پینل 2 (Number Panel) کی لاجک =================
+// ================= API 2 (Number Panel API Direct) =================
 
-func loginToPanel2() bool {
-	fmt.Println("🔄 [Auth-P2] Attempting to login to Panel 2 (Number Panel)...")
-	loginURL := NPBaseURL + "/login"
-	signinURL := NPBaseURL + "/signin"
-	reportsURL := NPBaseURL + "/client/SMSCDRStats"
-
-	resp, err := npAPIClient.Get(loginURL)
-	if err != nil {
-		fmt.Println("❌ [Auth-P2] Login Page Fetch Error:", err)
-		return false
-	}
-	bodyBytes, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-
-	re := regexp.MustCompile(`What is (\d+)\s*\+\s*(\d+)\s*=\s*\?`)
-	matches := re.FindStringSubmatch(string(bodyBytes))
-	
-	captchaAnswer := "11"
-	if len(matches) == 3 {
-		num1, _ := strconv.Atoi(matches[1])
-		num2, _ := strconv.Atoi(matches[2])
-		captchaAnswer = strconv.Itoa(num1 + num2)
-		fmt.Printf("🧠 [Auth-P2] Captcha Solved: %s + %s = %s\n", matches[1], matches[2], captchaAnswer)
-	}
-
-	formData := url.Values{}
-	formData.Set("username", "Kami522")
-	formData.Set("password", "Kami526")
-	formData.Set("capt", captchaAnswer)
-
-	req, _ := http.NewRequest("POST", signinURL, strings.NewReader(formData.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+func fetchNumberPanelAPI() ([]interface{}, bool) {
+	req, _ := http.NewRequest("GET", API_URL, nil)
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 10)")
-	req.Header.Set("Referer", loginURL)
-
-	resp2, err := npAPIClient.Do(req)
+	
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Println("❌ [Auth-P2] Signin Error:", err)
-		return false
-	}
-	resp2.Body.Close()
-
-	reqReports, _ := http.NewRequest("GET", reportsURL, nil)
-	reqReports.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 10)")
-	reqReports.Header.Set("Referer", NPBaseURL+"/client/SMSDashboard")
-	
-	respReports, err := npAPIClient.Do(reqReports)
-	if err == nil {
-		reportsBody, _ := io.ReadAll(respReports.Body)
-		respReports.Body.Close()
-		keyRegex := regexp.MustCompile(`sesskey=([a-zA-Z0-9%=]+)`)
-		keyMatches := keyRegex.FindStringSubmatch(string(reportsBody))
-		if len(keyMatches) >= 2 {
-			currentSessKeyPanel2 = keyMatches[1]
-			fmt.Println("✅ [Auth-P2] Successfully Logged in & Session Saved!")
-			return true
-		}
-	}
-	return false
-}
-
-func fetchPanel2Data() ([]interface{}, bool) {
-	if currentSessKeyPanel2 == "" {
-		return nil, false 
-	}
-	
-	now := time.Now()
-	dateStr := now.Format("2006-01-02")
-	
-	params := url.Values{}
-	params.Set("fdate1", dateStr+" 00:00:00")
-	params.Set("fdate2", dateStr+" 23:59:59")
-	params.Set("sesskey", currentSessKeyPanel2)
-	params.Set("sEcho", "2")
-	params.Set("iColumns", "7")
-	params.Set("iDisplayStart", "0")
-	params.Set("iDisplayLength", "-1")
-
-	finalURL := NPBaseURL + "/client/res/data_smscdr.php?" + params.Encode()
-
-	req, _ := http.NewRequest("GET", finalURL, nil)
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 10)")
-	req.Header.Set("X-Requested-With", "XMLHttpRequest")
-
-	resp, err := npAPIClient.Do(req)
-	if err != nil {
+		fmt.Printf("❌ [API-Fetch Error]: %v\n", err)
 		return nil, false
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
-	if bytes.Contains(body, []byte("<!DOCTYPE HTML>")) || bytes.Contains(body, []byte("<html")) {
-		return nil, false
-	}
-
 	var data map[string]interface{}
-	if err := json.Unmarshal(body, &data); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		return nil, false
 	}
-	if data != nil && data["aaData"] != nil {
-		return data["aaData"].([]interface{}), true
+	if aaData, ok := data["aaData"]; ok && aaData != nil {
+		return aaData.([]interface{}), true
 	}
 	return nil, true
 }
@@ -326,7 +235,7 @@ func cleanCountryName(name string) string {
 // ================= Monitoring Loop (Panel 1) =================
 
 func checkPanel1OTPs(cli *whatsmeow.Client) {
-	fmt.Println("📡 [P1] Calling SMS API...")
+	fmt.Println("📡 [P1] Calling SMS Hadi API...")
 	aaData, success := fetchPanel1Data()
 	
 	if !success {
@@ -336,7 +245,6 @@ func checkPanel1OTPs(cli *whatsmeow.Client) {
 	}
 
 	if len(aaData) == 0 {
-		fmt.Println("ℹ️ [P1] No data array found.")
 		return
 	}
 
@@ -348,10 +256,10 @@ func checkPanel1OTPs(cli *whatsmeow.Client) {
 
 			rawTime := fmt.Sprintf("%v", r[0])
 			phone := fmt.Sprintf("%v", r[2])
-			msgID := fmt.Sprintf("%v_%v", phone, rawTime)
+			msgID := fmt.Sprintf("P1_%v_%v", phone, rawTime)
 
-			if i == 0 { // Send the very first active check message
-				sendWhatsAppMessage(cli, r, msgID, true, 5) // index 5 for full message
+			if i == 0 { 
+				sendWhatsAppMessage(cli, r, msgID, true, 5) // index 5 for full message in Panel 1
 			}
 			markAsSent(msgID)
 		}
@@ -367,55 +275,46 @@ func checkPanel1OTPs(cli *whatsmeow.Client) {
 
 		rawTime := fmt.Sprintf("%v", r[0])
 		phone := fmt.Sprintf("%v", r[2])
-		msgID := fmt.Sprintf("%v_%v", phone, rawTime)
+		msgID := fmt.Sprintf("P1_%v_%v", phone, rawTime)
 
 		if isAlreadySent(msgID) { continue }
 
 		newMsgsCount++
-		sendWhatsAppMessage(cli, r, msgID, false, 5) // index 5 for msg
+		sendWhatsAppMessage(cli, r, msgID, false, 5) 
 	}
 
-	if newMsgsCount == 0 {
-		fmt.Println("ℹ️ [P1] No NEW messages found.")
-	} else {
+	if newMsgsCount > 0 {
 		fmt.Printf("🎉 [P1] Processed %d NEW messages!\n", newMsgsCount)
 	}
 }
 
-// ================= Monitoring Loop (Panel 2) =================
+// ================= Monitoring Loop (Number Panel API Direct) =================
 
-func checkPanel2OTPs(cli *whatsmeow.Client) {
-	fmt.Println("📡 [P2] Calling Number Panel API...")
-	aaData, success := fetchPanel2Data()
+func checkAPIOTPs(cli *whatsmeow.Client) {
+	fmt.Println("📡 [API] Calling Direct API...")
+	aaData, success := fetchNumberPanelAPI()
 	
-	if !success {
-		fmt.Println("⚠️ [P2] Session Expired. Triggering Re-login...")
-		loginToPanel2()
+	if !success || len(aaData) == 0 {
 		return
 	}
 
-	if len(aaData) == 0 {
-		fmt.Println("ℹ️ [P2] No data array found.")
-		return
-	}
-
-	if isFirstRunPanel2 {
-		fmt.Println("🚀 [P2-Boot] Caching old messages...")
+	if isFirstRunAPI {
+		fmt.Println("🚀 [API-Boot] Caching old messages...")
 		for i, row := range aaData {
 			r, ok := row.([]interface{})
 			if !ok || len(r) < 5 { continue }
 
 			rawTime := fmt.Sprintf("%v", r[0])
 			phone := fmt.Sprintf("%v", r[2])
-			msgID := fmt.Sprintf("P2_%v_%v", phone, rawTime) // prefix P2 to avoid overlap
+			msgID := fmt.Sprintf("API_%v_%v", phone, rawTime) 
 
 			if i == 0 { 
-				sendWhatsAppMessage(cli, r, msgID, true, 4) // index 4 for msg in panel 2
+				sendWhatsAppMessage(cli, r, msgID, true, 4) // index 4 for msg in API
 			}
 			markAsSent(msgID)
 		}
-		isFirstRunPanel2 = false
-		fmt.Printf("✅ [P2-Boot] %d old messages cached.\n", len(aaData))
+		isFirstRunAPI = false
+		fmt.Printf("✅ [API-Boot] %d old messages cached.\n", len(aaData))
 		return
 	}
 
@@ -426,18 +325,16 @@ func checkPanel2OTPs(cli *whatsmeow.Client) {
 
 		rawTime := fmt.Sprintf("%v", r[0])
 		phone := fmt.Sprintf("%v", r[2])
-		msgID := fmt.Sprintf("P2_%v_%v", phone, rawTime)
+		msgID := fmt.Sprintf("API_%v_%v", phone, rawTime)
 
 		if isAlreadySent(msgID) { continue }
 
 		newMsgsCount++
-		sendWhatsAppMessage(cli, r, msgID, false, 4) // index 4 for msg
+		sendWhatsAppMessage(cli, r, msgID, false, 4) 
 	}
 
-	if newMsgsCount == 0 {
-		fmt.Println("ℹ️ [P2] No NEW messages found.")
-	} else {
-		fmt.Printf("🎉 [P2] Processed %d NEW messages!\n", newMsgsCount)
+	if newMsgsCount > 0 {
+		fmt.Printf("🎉 [API] Processed %d NEW messages!\n", newMsgsCount)
 	}
 }
 
@@ -463,7 +360,7 @@ func sendWhatsAppMessage(cli *whatsmeow.Client, r []interface{}, msgID string, i
 
 	header := fmt.Sprintf("✨ *%s | %s Message* ⚡\n\n", cFlag, strings.ToUpper(service))
 	if isBootMsg {
-		header = "🟢 *Bot Active* 🟢\n\n" + header
+		header = "🟢 *Bot Started / Active Check* 🟢\n\n" + header
 	}
 
 	messageBody := header +
@@ -473,7 +370,7 @@ func sendWhatsAppMessage(cli *whatsmeow.Client, r []interface{}, msgID string, i
 		"> *Service:* %s\n"+
 		"   *OTP:* *%s*\n\n"+
 		"> *Join For Numbers:* \n"+
-		"> ¹ https://whatsapp.com/channel/0029VbClXwrATRSmvUg4F43l\n"+
+		"> ¹ https://chat.whatsapp.com/EbaJKbt5J2T6pgENIeFFht\n"+
 		"*Full Message:*\n"+
 		"%s\n\n"+
 		"> © Developed by Nothing Is Impossible",
@@ -666,7 +563,6 @@ func main() {
 	initClients()
 	
 	loginToPanel1()
-	loginToPanel2()
 
 	dbURL := "file:/app/data/kami_session.db?_foreign_keys=on"
 	dbLog := waLog.Stdout("Database", "INFO", true)
@@ -696,11 +592,11 @@ func main() {
 		}
 	}()
 
-	// ================= Panel 2 Loop (10 Seconds) =================
+	// ================= API Loop (10 Seconds) =================
 	go func() {
 		for {
 			if client != nil && client.IsLoggedIn() {
-				checkPanel2OTPs(client)
+				checkAPIOTPs(client)
 			}
 			time.Sleep(10 * time.Second)
 		}
