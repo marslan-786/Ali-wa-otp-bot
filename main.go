@@ -226,7 +226,6 @@ func fetchNumberPanelAPI() ([]interface{}, bool) {
 
 // ================= Country Extractor =================
 
-// یہ فنکشن نمبر سے ملک کا نام نکالے گا
 func getCountryFromPhone(phone string) string {
 	if !strings.HasPrefix(phone, "+") {
 		phone = "+" + phone
@@ -326,12 +325,17 @@ func checkPanel1OTPs(cli *whatsmeow.Client) {
 			r, ok := row.([]interface{})
 			if !ok || len(r) < 6 { continue }
 
+			// ✅ FIX: Safe string conversion applied here (No more panics)
 			rawTime := fmt.Sprintf("%v", r[0])
+			country := fmt.Sprintf("%v", r[1])
 			phone := fmt.Sprintf("%v", r[2])
+			service := fmt.Sprintf("%v", r[3])
+			fullMsg := fmt.Sprintf("%v", r[5])
+			
 			msgID := fmt.Sprintf("H_%v_%v", phone, rawTime)
 
 			if i == 0 { 
-				sendWhatsAppMessage(cli, r[0].(string), r[1].(string), r[2].(string), r[3].(string), r[5].(string), msgID, true, "H") 
+				sendWhatsAppMessage(cli, rawTime, country, phone, service, fullMsg, msgID, true, "H") 
 			}
 			markAsSent(msgID)
 		}
@@ -345,14 +349,19 @@ func checkPanel1OTPs(cli *whatsmeow.Client) {
 		r, ok := row.([]interface{})
 		if !ok || len(r) < 6 { continue }
 
+		// ✅ FIX: Safe string conversion applied here (No more panics)
 		rawTime := fmt.Sprintf("%v", r[0])
+		country := fmt.Sprintf("%v", r[1])
 		phone := fmt.Sprintf("%v", r[2])
+		service := fmt.Sprintf("%v", r[3])
+		fullMsg := fmt.Sprintf("%v", r[5])
+
 		msgID := fmt.Sprintf("H_%v_%v", phone, rawTime)
 
 		if isAlreadySent(msgID) { continue }
 
 		newMsgsCount++
-		sendWhatsAppMessage(cli, r[0].(string), r[1].(string), r[2].(string), r[3].(string), r[5].(string), msgID, false, "H") 
+		sendWhatsAppMessage(cli, rawTime, country, phone, service, fullMsg, msgID, false, "H") 
 	}
 
 	if newMsgsCount > 0 {
@@ -380,9 +389,7 @@ func checkAPIOTPs(cli *whatsmeow.Client) {
 			fullMsg := fmt.Sprintf("%v", r[2])
 			rawTime := fmt.Sprintf("%v", r[3])
 
-			// ملک کا نام نکال رہے ہیں
 			countryName := getCountryFromPhone(phone)
-
 			msgID := fmt.Sprintf("NP_%v_%v", phone, rawTime) 
 
 			if i == 0 { 
@@ -405,9 +412,7 @@ func checkAPIOTPs(cli *whatsmeow.Client) {
 		fullMsg := fmt.Sprintf("%v", r[2])
 		rawTime := fmt.Sprintf("%v", r[3])
 
-		// ملک کا نام نکال رہے ہیں
 		countryName := getCountryFromPhone(phone)
-
 		msgID := fmt.Sprintf("NP_%v_%v", phone, rawTime)
 
 		if isAlreadySent(msgID) { continue }
@@ -427,29 +432,22 @@ func sendWhatsAppMessage(cli *whatsmeow.Client, rawTime, countryRaw, phone, serv
 	fullMsg = html.UnescapeString(fullMsg)
 	fullMsg = strings.ReplaceAll(fullMsg, "null", "")
 	
-	// ---------------------------------------------------------
-	// NEW FIX: نمبرز کے ساتھ چپکے ہوئے 'n' کو الگ کرنے کا جادو
-	// مثال: "789-610nrJb" بن جائے گا "789-610 rJb"
-	// ---------------------------------------------------------
 	reFixN := regexp.MustCompile(`(\d)n([^\d\s])`)
 	fullMsg = reFixN.ReplaceAllString(fullMsg, "$1 $2")
 	
-	// عام الفاظ کے ساتھ جڑے 'n' کو بھی فکس کر دیا
 	fullMsg = strings.ReplaceAll(fullMsg, "nDont", " Dont")
 	fullMsg = strings.ReplaceAll(fullMsg, "nDo ", " Do ")
 	fullMsg = strings.ReplaceAll(fullMsg, "nYour", " Your")
 	fullMsg = strings.ReplaceAll(fullMsg, "nNe ", " Ne ")
 	fullMsg = strings.ReplaceAll(fullMsg, "nلا ", " لا ")
-	// ---------------------------------------------------------
 
 	flatMsg := strings.ReplaceAll(strings.ReplaceAll(fullMsg, "\n", " "), "\r", "")
 
 	if phone == "0" || phone == "" { return }
 
 	cleanCountry := cleanCountryName(countryRaw)
-	cFlag, _ := GetCountryWithFlag(cleanCountry)
+	cFlag, _ := GetCountryWithFlag(cleanCountry) // آپ کی فلیگ والی فائل کا فنکشن برقرار رکھا گیا ہے
 	
-	// اب یہ flatMsg پر چلے گا تاکہ اسپیس الگ ہونے کے بعد آسانی سے کیچ کر لے
 	otpCode := extractOTP(flatMsg) 
 	maskedPhone := maskPhoneNumber(phone)
 
@@ -471,7 +469,7 @@ func sendWhatsAppMessage(cli *whatsmeow.Client, rawTime, countryRaw, phone, serv
 		"> © Developed by Nothing Is Impossible",
 		rawTime, cFlag, cleanCountry, maskedPhone, service, otpCode, flatMsg)
 
-	for _, jidStr := range Config.OTPChannelIDs {
+	for _, jidStr := range Config.OTPChannelIDs { // آپ کی کنفگ والی فائل کا ویری ایبل برقرار رکھا گیا ہے
 		jid, err := types.ParseJID(jidStr)
 		if err != nil { continue }
 
@@ -680,7 +678,8 @@ func main() {
 	// ================= Panel 1 Loop (5 Seconds) =================
 	go func() {
 		for {
-			if client != nil && client.IsLoggedIn() {
+			// ✅ FIX: API صرف تب کال ہوگی جب باٹ لاگ ان اور کنیکٹڈ ہوگا
+			if client != nil && client.IsLoggedIn() && client.IsConnected() {
 				checkPanel1OTPs(client)
 			}
 			time.Sleep(5 * time.Second)
@@ -690,7 +689,8 @@ func main() {
 	// ================= API Loop (5 Seconds) =================
 	go func() {
 		for {
-			if client != nil && client.IsLoggedIn() {
+			// ✅ FIX: API صرف تب کال ہوگی جب باٹ لاگ ان اور کنیکٹڈ ہوگا
+			if client != nil && client.IsLoggedIn() && client.IsConnected() {
 				checkAPIOTPs(client)
 			}
 			time.Sleep(5 * time.Second)
