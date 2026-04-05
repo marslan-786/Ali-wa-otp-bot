@@ -32,12 +32,16 @@ import (
 
 var client *whatsmeow.Client
 var container *sqlstore.Container
-var otpDB *sql.DB 
+var otpDB *sql.DB
 
 // ================= پینل 1 (SMS Hadi) کے ویری ایبلز =================
 var isFirstRunPanel1 = true
 var directAPIClient *http.Client
-var currentSessKeyPanel1 string 
+var currentSessKeyPanel1 string
+
+// ================= پینل 3 (Time SMS) کے ویری ایبلز =================
+var isFirstRunPanel3 = true
+var currentSessKeyPanel3 string
 
 // ================= API (Number Panel) کے ویری ایبلز =================
 var isFirstRunAPI = true
@@ -69,7 +73,7 @@ func loginToPanel1() bool {
 
 	re := regexp.MustCompile(`What is (\d+)\s*\+\s*(\d+)\s*=\s*\?`)
 	matches := re.FindStringSubmatch(string(bodyBytes))
-	
+
 	captchaAnswer := "11"
 	if len(matches) == 3 {
 		num1, _ := strconv.Atoi(matches[1])
@@ -97,7 +101,7 @@ func loginToPanel1() bool {
 
 	reqReports, _ := http.NewRequest("GET", reportsURL, nil)
 	reqReports.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 10)")
-	
+
 	respReports, err := directAPIClient.Do(reqReports)
 	if err == nil {
 		reportsBody, _ := io.ReadAll(respReports.Body)
@@ -117,10 +121,10 @@ func fetchPanel1Data() ([]interface{}, bool) {
 	if currentSessKeyPanel1 == "" {
 		return nil, false
 	}
-	
+
 	now := time.Now()
 	dateStr := now.Format("2006-01-02")
-	
+
 	params := url.Values{}
 	params.Set("fdate1", dateStr+" 00:00:00")
 	params.Set("fdate2", dateStr+" 23:59:59")
@@ -186,18 +190,155 @@ func fetchPanel1Data() ([]interface{}, bool) {
 	return nil, true
 }
 
+
+// ================= پینل 3 (Time SMS) =================
+
+func loginToPanel3() bool {
+	fmt.Println("🔄 [Auth-TimeSMS] Attempting to login to Time SMS Panel...")
+	loginURL := "https://timesms.org/login"
+	signinURL := "https://timesms.org/signin"
+	reportsURL := "https://timesms.org/agent/SMSCDRReports"
+
+	resp, err := directAPIClient.Get(loginURL)
+	if err != nil {
+		fmt.Println("❌ [Auth-TimeSMS] Login Page Fetch Error:", err)
+		return false
+	}
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	re := regexp.MustCompile(`What is (\d+)\s*\+\s*(\d+)\s*=\s*\?`)
+	matches := re.FindStringSubmatch(string(bodyBytes))
+
+	captchaAnswer := "10"
+	if len(matches) == 3 {
+		num1, _ := strconv.Atoi(matches[1])
+		num2, _ := strconv.Atoi(matches[2])
+		captchaAnswer = strconv.Itoa(num1 + num2)
+		fmt.Printf("🧠 [Auth-TimeSMS] Captcha Solved: %s + %s = %s\n", matches[1], matches[2], captchaAnswer)
+	}
+
+	formData := url.Values{}
+	formData.Set("username", "opxali00")
+	formData.Set("password", "opxali12")
+	formData.Set("capt", captchaAnswer)
+
+	req, _ := http.NewRequest("POST", signinURL, strings.NewReader(formData.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Mobile Safari/537.36")
+	req.Header.Set("Referer", loginURL)
+
+	resp2, err := directAPIClient.Do(req)
+	if err != nil {
+		fmt.Println("❌ [Auth-TimeSMS] Signin Error:", err)
+		return false
+	}
+	resp2.Body.Close()
+
+	reqReports, _ := http.NewRequest("GET", reportsURL, nil)
+	reqReports.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Mobile Safari/537.36")
+
+	respReports, err := directAPIClient.Do(reqReports)
+	if err == nil {
+		reportsBody, _ := io.ReadAll(respReports.Body)
+		respReports.Body.Close()
+		keyRegex := regexp.MustCompile(`sesskey=([a-zA-Z0-9=]+)`)
+		keyMatches := keyRegex.FindStringSubmatch(string(reportsBody))
+		if len(keyMatches) >= 2 {
+			currentSessKeyPanel3 = keyMatches[1]
+			fmt.Println("✅ [Auth-TimeSMS] Successfully Logged in & Session Saved!")
+			return true
+		}
+	}
+	return false
+}
+
+func fetchPanel3Data() ([]interface{}, bool) {
+	if currentSessKeyPanel3 == "" {
+		return nil, false
+	}
+
+	now := time.Now()
+	dateStr := now.Format("2006-01-02")
+
+	params := url.Values{}
+	params.Set("fdate1", dateStr+" 00:00:00")
+	params.Set("fdate2", dateStr+" 23:59:59")
+	params.Set("frange", "")
+	params.Set("fclient", "")
+	params.Set("fnum", "")
+	params.Set("fcli", "")
+	params.Set("fgdate", "")
+	params.Set("fgmonth", "")
+	params.Set("fgrange", "")
+	params.Set("fgclient", "")
+	params.Set("fgnumber", "")
+	params.Set("fgcli", "")
+	params.Set("fg", "0")
+	params.Set("sesskey", currentSessKeyPanel3)
+	params.Set("sEcho", "1")
+	params.Set("iColumns", "9")
+	params.Set("sColumns", ",,,,,,,,")
+	params.Set("iDisplayStart", "0")
+	params.Set("iDisplayLength", "25")
+
+	for i := 0; i < 9; i++ {
+		idx := strconv.Itoa(i)
+		params.Set("mDataProp_"+idx, idx)
+		params.Set("sSearch_"+idx, "")
+		params.Set("bRegex_"+idx, "false")
+		params.Set("bSearchable_"+idx, "true")
+		if i == 8 {
+			params.Set("bSortable_"+idx, "false")
+		} else {
+			params.Set("bSortable_"+idx, "true")
+		}
+	}
+	params.Set("sSearch", "")
+	params.Set("bRegex", "false")
+	params.Set("iSortCol_0", "0")
+	params.Set("sSortDir_0", "desc")
+	params.Set("iSortingCols", "1")
+
+	fetchURL := "https://timesms.org/agent/res/data_smscdr.php?" + params.Encode()
+
+	req, _ := http.NewRequest("GET", fetchURL, nil)
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Mobile Safari/537.36")
+
+	resp, err := directAPIClient.Do(req)
+	if err != nil {
+		return nil, false
+	}
+	defer resp.Body.Close()
+
+	if resp.Request.URL.Path == "/login" || resp.StatusCode != http.StatusOK {
+		return nil, false
+	}
+
+	var data map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return nil, false
+	}
+	if data != nil && data["aaData"] != nil {
+		return data["aaData"].([]interface{}), true
+	}
+	return nil, true
+}
+
+
 // ================= API 2 (Number Panel API Direct) =================
 
 func fetchNumberPanelAPI() ([]interface{}, bool) {
 	now := time.Now()
 	dateStr := now.Format("2006-01-02")
-	
+
 	token := "R1dSSkdBUzRzhHFSf4SMh2FsUVyIZYpiU5GNYkp4aHNVUVVleJSRSA=="
 	fetchURL := fmt.Sprintf("http://147.135.212.197/crapi/st/viewstats?token=%s&dt1=%s%%2000:00:00&dt2=%s%%2023:59:59&records=50", token, dateStr, dateStr)
 
 	req, _ := http.NewRequest("GET", fetchURL, nil)
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 10)")
-	
+
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -256,7 +397,7 @@ func initSQLiteDB() {
 		msg_id TEXT PRIMARY KEY,
 		sent_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);`
-	
+
 	_, err = otpDB.Exec(createTableQuery)
 	if err != nil {
 		panic(fmt.Sprintf("❌ Failed to create table: %v", err))
@@ -308,7 +449,7 @@ func cleanCountryName(name string) string {
 
 func checkPanel1OTPs(cli *whatsmeow.Client) {
 	aaData, success := fetchPanel1Data()
-	
+
 	if !success {
 		fmt.Println("⚠️ [Hadi] Session Expired. Triggering Re-login...")
 		loginToPanel1()
@@ -325,17 +466,12 @@ func checkPanel1OTPs(cli *whatsmeow.Client) {
 			r, ok := row.([]interface{})
 			if !ok || len(r) < 6 { continue }
 
-			// ✅ FIX: Safe string conversion applied here (No more panics)
 			rawTime := fmt.Sprintf("%v", r[0])
-			country := fmt.Sprintf("%v", r[1])
 			phone := fmt.Sprintf("%v", r[2])
-			service := fmt.Sprintf("%v", r[3])
-			fullMsg := fmt.Sprintf("%v", r[5])
-			
 			msgID := fmt.Sprintf("H_%v_%v", phone, rawTime)
 
-			if i == 0 { 
-				sendWhatsAppMessage(cli, rawTime, country, phone, service, fullMsg, msgID, true, "H") 
+			if i == 0 {
+				sendWhatsAppMessage(cli, r[0].(string), r[1].(string), r[2].(string), r[3].(string), r[5].(string), msgID, true, "H")
 			}
 			markAsSent(msgID)
 		}
@@ -349,19 +485,14 @@ func checkPanel1OTPs(cli *whatsmeow.Client) {
 		r, ok := row.([]interface{})
 		if !ok || len(r) < 6 { continue }
 
-		// ✅ FIX: Safe string conversion applied here (No more panics)
 		rawTime := fmt.Sprintf("%v", r[0])
-		country := fmt.Sprintf("%v", r[1])
 		phone := fmt.Sprintf("%v", r[2])
-		service := fmt.Sprintf("%v", r[3])
-		fullMsg := fmt.Sprintf("%v", r[5])
-
 		msgID := fmt.Sprintf("H_%v_%v", phone, rawTime)
 
 		if isAlreadySent(msgID) { continue }
 
 		newMsgsCount++
-		sendWhatsAppMessage(cli, rawTime, country, phone, service, fullMsg, msgID, false, "H") 
+		sendWhatsAppMessage(cli, r[0].(string), r[1].(string), r[2].(string), r[3].(string), r[5].(string), msgID, false, "H")
 	}
 
 	if newMsgsCount > 0 {
@@ -369,11 +500,68 @@ func checkPanel1OTPs(cli *whatsmeow.Client) {
 	}
 }
 
+
+// ================= Monitoring Loop (Panel 3 - Time SMS) =================
+
+func checkPanel3OTPs(cli *whatsmeow.Client) {
+	aaData, success := fetchPanel3Data()
+
+	if !success {
+		fmt.Println("⚠️ [TimeSMS] Session Expired. Triggering Re-login...")
+		loginToPanel3()
+		return
+	}
+
+	if len(aaData) == 0 {
+		return
+	}
+
+	if isFirstRunPanel3 {
+		fmt.Println("🚀 [TimeSMS-Boot] Caching old messages...")
+		for i, row := range aaData {
+			r, ok := row.([]interface{})
+			if !ok || len(r) < 6 { continue }
+
+			rawTime := fmt.Sprintf("%v", r[0])
+			phone := fmt.Sprintf("%v", r[2])
+			msgID := fmt.Sprintf("TS_%v_%v", phone, rawTime)
+
+			if i == 0 {
+				sendWhatsAppMessage(cli, r[0].(string), r[1].(string), r[2].(string), r[3].(string), r[5].(string), msgID, true, "TS")
+			}
+			markAsSent(msgID)
+		}
+		isFirstRunPanel3 = false
+		fmt.Printf("✅ [TimeSMS-Boot] %d old messages cached.\n", len(aaData))
+		return
+	}
+
+	newMsgsCount := 0
+	for _, row := range aaData {
+		r, ok := row.([]interface{})
+		if !ok || len(r) < 6 { continue }
+
+		rawTime := fmt.Sprintf("%v", r[0])
+		phone := fmt.Sprintf("%v", r[2])
+		msgID := fmt.Sprintf("TS_%v_%v", phone, rawTime)
+
+		if isAlreadySent(msgID) { continue }
+
+		newMsgsCount++
+		sendWhatsAppMessage(cli, r[0].(string), r[1].(string), r[2].(string), r[3].(string), r[5].(string), msgID, false, "TS")
+	}
+
+	if newMsgsCount > 0 {
+		fmt.Printf("🎉 [TimeSMS] Processed %d NEW messages!\n", newMsgsCount)
+	}
+}
+
+
 // ================= Monitoring Loop (Number Panel API Direct) =================
 
 func checkAPIOTPs(cli *whatsmeow.Client) {
 	aaData, success := fetchNumberPanelAPI()
-	
+
 	if !success || len(aaData) == 0 {
 		return
 	}
@@ -390,10 +578,10 @@ func checkAPIOTPs(cli *whatsmeow.Client) {
 			rawTime := fmt.Sprintf("%v", r[3])
 
 			countryName := getCountryFromPhone(phone)
-			msgID := fmt.Sprintf("NP_%v_%v", phone, rawTime) 
+			msgID := fmt.Sprintf("NP_%v_%v", phone, rawTime)
 
-			if i == 0 { 
-				sendWhatsAppMessage(cli, rawTime, countryName, phone, service, fullMsg, msgID, true, "NP") 
+			if i == 0 {
+				sendWhatsAppMessage(cli, rawTime, countryName, phone, service, fullMsg, msgID, true, "NP")
 			}
 			markAsSent(msgID)
 		}
@@ -418,7 +606,7 @@ func checkAPIOTPs(cli *whatsmeow.Client) {
 		if isAlreadySent(msgID) { continue }
 
 		newMsgsCount++
-		sendWhatsAppMessage(cli, rawTime, countryName, phone, service, fullMsg, msgID, false, "NP") 
+		sendWhatsAppMessage(cli, rawTime, countryName, phone, service, fullMsg, msgID, false, "NP")
 	}
 
 	if newMsgsCount > 0 {
@@ -431,10 +619,10 @@ func checkAPIOTPs(cli *whatsmeow.Client) {
 func sendWhatsAppMessage(cli *whatsmeow.Client, rawTime, countryRaw, phone, service, fullMsg, msgID string, isBootMsg bool, panelSource string) {
 	fullMsg = html.UnescapeString(fullMsg)
 	fullMsg = strings.ReplaceAll(fullMsg, "null", "")
-	
+
 	reFixN := regexp.MustCompile(`(\d)n([^\d\s])`)
 	fullMsg = reFixN.ReplaceAllString(fullMsg, "$1 $2")
-	
+
 	fullMsg = strings.ReplaceAll(fullMsg, "nDont", " Dont")
 	fullMsg = strings.ReplaceAll(fullMsg, "nDo ", " Do ")
 	fullMsg = strings.ReplaceAll(fullMsg, "nYour", " Your")
@@ -446,9 +634,9 @@ func sendWhatsAppMessage(cli *whatsmeow.Client, rawTime, countryRaw, phone, serv
 	if phone == "0" || phone == "" { return }
 
 	cleanCountry := cleanCountryName(countryRaw)
-	cFlag, _ := GetCountryWithFlag(cleanCountry) // آپ کی فلیگ والی فائل کا فنکشن برقرار رکھا گیا ہے
-	
-	otpCode := extractOTP(flatMsg) 
+	cFlag, _ := GetCountryWithFlag(cleanCountry)
+
+	otpCode := extractOTP(flatMsg)
 	maskedPhone := maskPhoneNumber(phone)
 
 	header := fmt.Sprintf("✨ *%s | %s Message* ⚡ [%s]\n\n", cFlag, strings.ToUpper(service), panelSource)
@@ -469,20 +657,20 @@ func sendWhatsAppMessage(cli *whatsmeow.Client, rawTime, countryRaw, phone, serv
 		"> © Developed by Nothing Is Impossible",
 		rawTime, cFlag, cleanCountry, maskedPhone, service, otpCode, flatMsg)
 
-	for _, jidStr := range Config.OTPChannelIDs { // آپ کی کنفگ والی فائل کا ویری ایبل برقرار رکھا گیا ہے
+	for _, jidStr := range Config.OTPChannelIDs {
 		jid, err := types.ParseJID(jidStr)
 		if err != nil { continue }
 
 		_, err = cli.SendMessage(context.Background(), jid, &waProto.Message{
 			Conversation: proto.String(strings.TrimSpace(messageBody)),
 		})
-		
+
 		if err != nil {
 			fmt.Printf("❌ [Send Error] %s: %v\n", phone, err)
 		} else {
 			fmt.Printf("✅ [Sent] OTP for %s to Channel [%s]\n", phone, jidStr)
 		}
-		time.Sleep(1 * time.Second) 
+		time.Sleep(1 * time.Second)
 	}
 	markAsSent(msgID)
 }
@@ -640,7 +828,7 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("✅ Kami Bot is Running! Use /link/pair/NUMBER to pair."))
 	})
-	
+
 	http.HandleFunc("/link/pair/", handlePairAPI)
 	http.HandleFunc("/link/delete", handleDeleteSession)
 
@@ -654,12 +842,14 @@ func main() {
 
 	initSQLiteDB()
 	initClients()
-	
+
+	// دونوں پینلز میں لاگ ان
 	loginToPanel1()
+	loginToPanel3() // Time SMS Login
 
 	dbURL := "file:/app/data/kami_session.db?_foreign_keys=on"
 	dbLog := waLog.Stdout("Database", "INFO", true)
-	
+
 	var err error
 	container, err = sqlstore.New(context.Background(), "sqlite3", dbURL, dbLog)
 	if err == nil {
@@ -675,22 +865,30 @@ func main() {
 		}
 	}
 
-	// ================= Panel 1 Loop (5 Seconds) =================
+	// ================= Panel 1 Loop (SMS Hadi) =================
 	go func() {
 		for {
-			// ✅ FIX: API صرف تب کال ہوگی جب باٹ لاگ ان اور کنیکٹڈ ہوگا
-			if client != nil && client.IsLoggedIn() && client.IsConnected() {
+			if client != nil && client.IsLoggedIn() {
 				checkPanel1OTPs(client)
 			}
 			time.Sleep(5 * time.Second)
 		}
 	}()
 
-	// ================= API Loop (5 Seconds) =================
+	// ================= Panel 3 Loop (Time SMS) =================
 	go func() {
 		for {
-			// ✅ FIX: API صرف تب کال ہوگی جب باٹ لاگ ان اور کنیکٹڈ ہوگا
-			if client != nil && client.IsLoggedIn() && client.IsConnected() {
+			if client != nil && client.IsLoggedIn() {
+				checkPanel3OTPs(client)
+			}
+			time.Sleep(5 * time.Second)
+		}
+	}()
+
+	// ================= API Loop (Number Panel) =================
+	go func() {
+		for {
+			if client != nil && client.IsLoggedIn() {
 				checkAPIOTPs(client)
 			}
 			time.Sleep(5 * time.Second)
