@@ -66,6 +66,15 @@ func initClients() {
 	apiClient = &http.Client{Timeout: 15 * time.Second}
 }
 
+// ================= ڈیٹا ٹائپ پروٹیکشن فنکشن =================
+// یہ فنکشن null یا غلط ڈیٹا پر کریش ہونے سے بچائے گا
+func getString(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+	return fmt.Sprintf("%v", v)
+}
+
 // ================= پینل 1 (SMS Hadi) =================
 
 func loginToPanel1() bool {
@@ -134,7 +143,7 @@ func fetchPanel1Data() ([]interface{}, bool) {
 
 	now := time.Now()
 	dateStr := now.Format("2006-01-02")
-	timestamp := strconv.FormatInt(now.UnixNano()/1e6, 10) // Cache-buster
+	timestamp := strconv.FormatInt(now.UnixNano()/1e6, 10)
 
 	params := url.Values{}
 	params.Set("fdate1", dateStr+" 00:00:00")
@@ -156,7 +165,7 @@ func fetchPanel1Data() ([]interface{}, bool) {
 	params.Set("sColumns", ",,,,,,,,")
 	params.Set("iDisplayStart", "0")
 	params.Set("iDisplayLength", "50")
-	params.Set("_", timestamp) // کیشنگ سے بچنے کے لیے
+	params.Set("_", timestamp)
 
 	for i := 0; i < 9; i++ {
 		idx := strconv.Itoa(i)
@@ -194,12 +203,21 @@ func fetchPanel1Data() ([]interface{}, bool) {
 
 	var data map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return nil, false
+		return nil, false // JSON پارس نہ ہو سکے تو خاموشی سے واپس
 	}
-	if data != nil && data["aaData"] != nil {
-		return data["aaData"].([]interface{}), true
+
+	// کریش پروٹیکشن: اگر aaData موجود ہی نہ ہو
+	aaDataRaw, exists := data["aaData"]
+	if !exists || aaDataRaw == nil {
+		return nil, true // ریکویسٹ ٹھیک تھی مگر ڈیٹا خالی تھا
 	}
-	return nil, true
+
+	aaData, ok := aaDataRaw.([]interface{})
+	if !ok {
+		return nil, false // ڈیٹا غلط فارمیٹ میں ہے
+	}
+
+	return aaData, true
 }
 
 // ================= پینل 3 (Time SMS) =================
@@ -270,7 +288,7 @@ func fetchPanel3Data() ([]interface{}, bool) {
 
 	now := time.Now()
 	dateStr := now.Format("2006-01-02")
-	timestamp := strconv.FormatInt(now.UnixNano()/1e6, 10) // Cache-buster
+	timestamp := strconv.FormatInt(now.UnixNano()/1e6, 10)
 
 	params := url.Values{}
 	params.Set("fdate1", dateStr+" 00:00:00")
@@ -292,7 +310,7 @@ func fetchPanel3Data() ([]interface{}, bool) {
 	params.Set("sColumns", ",,,,,,,,")
 	params.Set("iDisplayStart", "0")
 	params.Set("iDisplayLength", "25")
-	params.Set("_", timestamp) // کیشنگ سے بچنے کے لیے
+	params.Set("_", timestamp)
 
 	for i := 0; i < 9; i++ {
 		idx := strconv.Itoa(i)
@@ -332,10 +350,19 @@ func fetchPanel3Data() ([]interface{}, bool) {
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		return nil, false
 	}
-	if data != nil && data["aaData"] != nil {
-		return data["aaData"].([]interface{}), true
+
+	// کریش پروٹیکشن: اگر aaData موجود ہی نہ ہو
+	aaDataRaw, exists := data["aaData"]
+	if !exists || aaDataRaw == nil {
+		return nil, true // ریکویسٹ ٹھیک تھی مگر ڈیٹا خالی تھا
 	}
-	return nil, true
+
+	aaData, ok := aaDataRaw.([]interface{})
+	if !ok {
+		return nil, false
+	}
+
+	return aaData, true
 }
 
 // ================= API 2 (Number Panel API Direct) =================
@@ -343,7 +370,7 @@ func fetchPanel3Data() ([]interface{}, bool) {
 func fetchNumberPanelAPI() ([]interface{}, bool) {
 	now := time.Now()
 	dateStr := now.Format("2006-01-02")
-	timestamp := strconv.FormatInt(now.UnixNano()/1e6, 10) // Cache-buster
+	timestamp := strconv.FormatInt(now.UnixNano()/1e6, 10)
 
 	token := "R1dSSkdBUzRzhHFSf4SMh2FsUVyIZYpiU5GNYkp4aHNVUVVleJSRSA=="
 	fetchURL := fmt.Sprintf("http://147.135.212.197/crapi/st/viewstats?token=%s&dt1=%s%%2000:00:00&dt2=%s%%2023:59:59&records=50&_=%s", token, dateStr, dateStr, timestamp)
@@ -359,7 +386,7 @@ func fetchNumberPanelAPI() ([]interface{}, bool) {
 
 	var data [][]string
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return nil, false
+		return nil, false // JSON کا فارمیٹ غلط ہو تو خاموشی سے اگنور کرے گا
 	}
 
 	var interfaceData []interface{}
@@ -481,12 +508,15 @@ func checkPanel1OTPs(cli *whatsmeow.Client) {
 			r, ok := row.([]interface{})
 			if !ok || len(r) < 6 { continue }
 
-			rawTime := fmt.Sprintf("%v", r[0])
-			phone := fmt.Sprintf("%v", r[2])
+			rawTime := getString(r[0])
+			rangeStr := getString(r[1])
+			phone := getString(r[2])
+			service := getString(r[3])
+			fullMsg := getString(r[5])
 			msgID := fmt.Sprintf("H_%v_%v", phone, rawTime)
 
 			if i == 0 {
-				sendWhatsAppMessage(cli, r[0].(string), r[1].(string), r[2].(string), r[3].(string), r[5].(string), msgID, true, "H")
+				sendWhatsAppMessage(cli, rawTime, rangeStr, phone, service, fullMsg, msgID, true, "H")
 			}
 			markAsSent(msgID)
 		}
@@ -498,13 +528,16 @@ func checkPanel1OTPs(cli *whatsmeow.Client) {
 		r, ok := row.([]interface{})
 		if !ok || len(r) < 6 { continue }
 
-		rawTime := fmt.Sprintf("%v", r[0])
-		phone := fmt.Sprintf("%v", r[2])
+		rawTime := getString(r[0])
+		rangeStr := getString(r[1])
+		phone := getString(r[2])
+		service := getString(r[3])
+		fullMsg := getString(r[5])
 		msgID := fmt.Sprintf("H_%v_%v", phone, rawTime)
 
 		if isAlreadySent(msgID) { continue }
 
-		sendWhatsAppMessage(cli, r[0].(string), r[1].(string), r[2].(string), r[3].(string), r[5].(string), msgID, false, "H")
+		sendWhatsAppMessage(cli, rawTime, rangeStr, phone, service, fullMsg, msgID, false, "H")
 	}
 }
 
@@ -529,12 +562,15 @@ func checkPanel3OTPs(cli *whatsmeow.Client) {
 			r, ok := row.([]interface{})
 			if !ok || len(r) < 6 { continue }
 
-			rawTime := fmt.Sprintf("%v", r[0])
-			phone := fmt.Sprintf("%v", r[2])
+			rawTime := getString(r[0])
+			rangeStr := getString(r[1])
+			phone := getString(r[2])
+			service := getString(r[3])
+			fullMsg := getString(r[5])
 			msgID := fmt.Sprintf("TS_%v_%v", phone, rawTime)
 
 			if i == 0 {
-				sendWhatsAppMessage(cli, r[0].(string), r[1].(string), r[2].(string), r[3].(string), r[5].(string), msgID, true, "TS")
+				sendWhatsAppMessage(cli, rawTime, rangeStr, phone, service, fullMsg, msgID, true, "TS")
 			}
 			markAsSent(msgID)
 		}
@@ -546,13 +582,16 @@ func checkPanel3OTPs(cli *whatsmeow.Client) {
 		r, ok := row.([]interface{})
 		if !ok || len(r) < 6 { continue }
 
-		rawTime := fmt.Sprintf("%v", r[0])
-		phone := fmt.Sprintf("%v", r[2])
+		rawTime := getString(r[0])
+		rangeStr := getString(r[1])
+		phone := getString(r[2])
+		service := getString(r[3])
+		fullMsg := getString(r[5])
 		msgID := fmt.Sprintf("TS_%v_%v", phone, rawTime)
 
 		if isAlreadySent(msgID) { continue }
 
-		sendWhatsAppMessage(cli, r[0].(string), r[1].(string), r[2].(string), r[3].(string), r[5].(string), msgID, false, "TS")
+		sendWhatsAppMessage(cli, rawTime, rangeStr, phone, service, fullMsg, msgID, false, "TS")
 	}
 }
 
@@ -571,10 +610,10 @@ func checkAPIOTPs(cli *whatsmeow.Client) {
 			r, ok := row.([]interface{})
 			if !ok || len(r) < 4 { continue }
 
-			service := fmt.Sprintf("%v", r[0])
-			phone := fmt.Sprintf("%v", r[1])
-			fullMsg := fmt.Sprintf("%v", r[2])
-			rawTime := fmt.Sprintf("%v", r[3])
+			service := getString(r[0])
+			phone := getString(r[1])
+			fullMsg := getString(r[2])
+			rawTime := getString(r[3])
 
 			countryName := getCountryFromPhone(phone)
 			msgID := fmt.Sprintf("NP_%v_%v", phone, rawTime)
@@ -592,10 +631,10 @@ func checkAPIOTPs(cli *whatsmeow.Client) {
 		r, ok := row.([]interface{})
 		if !ok || len(r) < 4 { continue }
 
-		service := fmt.Sprintf("%v", r[0])
-		phone := fmt.Sprintf("%v", r[1])
-		fullMsg := fmt.Sprintf("%v", r[2])
-		rawTime := fmt.Sprintf("%v", r[3])
+		service := getString(r[0])
+		phone := getString(r[1])
+		fullMsg := getString(r[2])
+		rawTime := getString(r[3])
 
 		countryName := getCountryFromPhone(phone)
 		msgID := fmt.Sprintf("NP_%v_%v", phone, rawTime)
@@ -653,7 +692,6 @@ func sendWhatsAppMessage(cli *whatsmeow.Client, rawTime, countryRaw, phone, serv
 		jid, err := types.ParseJID(jidStr)
 		if err != nil { continue }
 
-		// واٹس ایپ میسج کو بلاک ہونے سے بچانے کے لیے ٹائم آؤٹ
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		_, err = cli.SendMessage(ctx, jid, &waProto.Message{
 			Conversation: proto.String(strings.TrimSpace(messageBody)),
@@ -838,7 +876,6 @@ func main() {
 	initSQLiteDB()
 	initClients()
 
-	// دونوں پینلز میں لاگ ان
 	loginToPanel1()
 	loginToPanel3()
 
@@ -860,32 +897,53 @@ func main() {
 		}
 	}
 
-	// ================= Panel 1 Loop (SMS Hadi - 5 Seconds) =================
+	// ================= Panel 1 Loop (Auto-Heal Enabled) =================
 	go func() {
 		for {
-			if client != nil && client.IsConnected() && client.IsLoggedIn() {
-				checkPanel1OTPs(client)
-			}
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						fmt.Printf("⚠️ [Recovered] Hadi Panel Crash Prevented: %v\n", r)
+					}
+				}()
+				if client != nil && client.IsConnected() && client.IsLoggedIn() {
+					checkPanel1OTPs(client)
+				}
+			}()
 			time.Sleep(5 * time.Second)
 		}
 	}()
 
-	// ================= Panel 3 Loop (Time SMS - 5 Seconds) =================
+	// ================= Panel 3 Loop (Auto-Heal Enabled) =================
 	go func() {
 		for {
-			if client != nil && client.IsConnected() && client.IsLoggedIn() {
-				checkPanel3OTPs(client)
-			}
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						fmt.Printf("⚠️ [Recovered] TimeSMS Panel Crash Prevented: %v\n", r)
+					}
+				}()
+				if client != nil && client.IsConnected() && client.IsLoggedIn() {
+					checkPanel3OTPs(client)
+				}
+			}()
 			time.Sleep(5 * time.Second)
 		}
 	}()
 
-	// ================= API Loop (Number Panel - 10 Seconds) =================
+	// ================= API Loop (Auto-Heal Enabled) =================
 	go func() {
 		for {
-			if client != nil && client.IsConnected() && client.IsLoggedIn() {
-				checkAPIOTPs(client)
-			}
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						fmt.Printf("⚠️ [Recovered] API Panel Crash Prevented: %v\n", r)
+					}
+				}()
+				if client != nil && client.IsConnected() && client.IsLoggedIn() {
+					checkAPIOTPs(client)
+				}
+			}()
 			time.Sleep(10 * time.Second)
 		}
 	}()
