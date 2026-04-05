@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -30,13 +31,15 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-var client *whatsmeow.Client
-var container *sqlstore.Container
-var otpDB *sql.DB
+var (
+	client    *whatsmeow.Client
+	container *sqlstore.Container
+	otpDB     *sql.DB
+	dbMutex   sync.Mutex // کانکرنٹ ڈیٹا بیس رائٹ کو ہینڈل کرنے کے لیے
+)
 
 // ================= پینل 1 (SMS Hadi) کے ویری ایبلز =================
 var isFirstRunPanel1 = true
-var directAPIClient *http.Client
 var currentSessKeyPanel1 string
 
 // ================= پینل 3 (Time SMS) کے ویری ایبلز =================
@@ -46,13 +49,21 @@ var currentSessKeyPanel3 string
 // ================= API (Number Panel) کے ویری ایبلز =================
 var isFirstRunAPI = true
 
-// ================= HTTP کلائنٹ Setup =================
+// ================= الگ الگ HTTP کلائنٹس =================
+var (
+	panel1Client *http.Client
+	panel3Client *http.Client
+	apiClient    *http.Client
+)
+
 func initClients() {
 	jar1, _ := cookiejar.New(nil)
-	directAPIClient = &http.Client{
-		Jar:     jar1,
-		Timeout: 15 * time.Second,
-	}
+	panel1Client = &http.Client{Jar: jar1, Timeout: 15 * time.Second}
+
+	jar3, _ := cookiejar.New(nil)
+	panel3Client = &http.Client{Jar: jar3, Timeout: 15 * time.Second}
+
+	apiClient = &http.Client{Timeout: 15 * time.Second}
 }
 
 // ================= پینل 1 (SMS Hadi) =================
@@ -63,7 +74,7 @@ func loginToPanel1() bool {
 	signinURL := "http://185.2.83.39/ints/signin"
 	reportsURL := "http://185.2.83.39/ints/agent/SMSCDRReports"
 
-	resp, err := directAPIClient.Get(loginURL)
+	resp, err := panel1Client.Get(loginURL)
 	if err != nil {
 		fmt.Println("❌ [Auth-Hadi] Login Page Fetch Error:", err)
 		return false
@@ -79,7 +90,6 @@ func loginToPanel1() bool {
 		num1, _ := strconv.Atoi(matches[1])
 		num2, _ := strconv.Atoi(matches[2])
 		captchaAnswer = strconv.Itoa(num1 + num2)
-		fmt.Printf("🧠 [Auth-Hadi] Captcha Solved: %s + %s = %s\n", matches[1], matches[2], captchaAnswer)
 	}
 
 	formData := url.Values{}
@@ -92,7 +102,7 @@ func loginToPanel1() bool {
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 10)")
 	req.Header.Set("Referer", loginURL)
 
-	resp2, err := directAPIClient.Do(req)
+	resp2, err := panel1Client.Do(req)
 	if err != nil {
 		fmt.Println("❌ [Auth-Hadi] Signin Error:", err)
 		return false
@@ -102,7 +112,7 @@ func loginToPanel1() bool {
 	reqReports, _ := http.NewRequest("GET", reportsURL, nil)
 	reqReports.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 10)")
 
-	respReports, err := directAPIClient.Do(reqReports)
+	respReports, err := panel1Client.Do(reqReports)
 	if err == nil {
 		reportsBody, _ := io.ReadAll(respReports.Body)
 		respReports.Body.Close()
@@ -124,6 +134,7 @@ func fetchPanel1Data() ([]interface{}, bool) {
 
 	now := time.Now()
 	dateStr := now.Format("2006-01-02")
+	timestamp := strconv.FormatInt(now.UnixNano()/1e6, 10) // Cache-buster
 
 	params := url.Values{}
 	params.Set("fdate1", dateStr+" 00:00:00")
@@ -145,6 +156,7 @@ func fetchPanel1Data() ([]interface{}, bool) {
 	params.Set("sColumns", ",,,,,,,,")
 	params.Set("iDisplayStart", "0")
 	params.Set("iDisplayLength", "50")
+	params.Set("_", timestamp) // کیشنگ سے بچنے کے لیے
 
 	for i := 0; i < 9; i++ {
 		idx := strconv.Itoa(i)
@@ -170,7 +182,7 @@ func fetchPanel1Data() ([]interface{}, bool) {
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 10)")
 
-	resp, err := directAPIClient.Do(req)
+	resp, err := panel1Client.Do(req)
 	if err != nil {
 		return nil, false
 	}
@@ -190,7 +202,6 @@ func fetchPanel1Data() ([]interface{}, bool) {
 	return nil, true
 }
 
-
 // ================= پینل 3 (Time SMS) =================
 
 func loginToPanel3() bool {
@@ -199,7 +210,7 @@ func loginToPanel3() bool {
 	signinURL := "https://timesms.org/signin"
 	reportsURL := "https://timesms.org/agent/SMSCDRReports"
 
-	resp, err := directAPIClient.Get(loginURL)
+	resp, err := panel3Client.Get(loginURL)
 	if err != nil {
 		fmt.Println("❌ [Auth-TimeSMS] Login Page Fetch Error:", err)
 		return false
@@ -215,7 +226,6 @@ func loginToPanel3() bool {
 		num1, _ := strconv.Atoi(matches[1])
 		num2, _ := strconv.Atoi(matches[2])
 		captchaAnswer = strconv.Itoa(num1 + num2)
-		fmt.Printf("🧠 [Auth-TimeSMS] Captcha Solved: %s + %s = %s\n", matches[1], matches[2], captchaAnswer)
 	}
 
 	formData := url.Values{}
@@ -225,10 +235,10 @@ func loginToPanel3() bool {
 
 	req, _ := http.NewRequest("POST", signinURL, strings.NewReader(formData.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Mobile Safari/537.36")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 10)")
 	req.Header.Set("Referer", loginURL)
 
-	resp2, err := directAPIClient.Do(req)
+	resp2, err := panel3Client.Do(req)
 	if err != nil {
 		fmt.Println("❌ [Auth-TimeSMS] Signin Error:", err)
 		return false
@@ -236,9 +246,9 @@ func loginToPanel3() bool {
 	resp2.Body.Close()
 
 	reqReports, _ := http.NewRequest("GET", reportsURL, nil)
-	reqReports.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Mobile Safari/537.36")
+	reqReports.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 10)")
 
-	respReports, err := directAPIClient.Do(reqReports)
+	respReports, err := panel3Client.Do(reqReports)
 	if err == nil {
 		reportsBody, _ := io.ReadAll(respReports.Body)
 		respReports.Body.Close()
@@ -260,6 +270,7 @@ func fetchPanel3Data() ([]interface{}, bool) {
 
 	now := time.Now()
 	dateStr := now.Format("2006-01-02")
+	timestamp := strconv.FormatInt(now.UnixNano()/1e6, 10) // Cache-buster
 
 	params := url.Values{}
 	params.Set("fdate1", dateStr+" 00:00:00")
@@ -281,6 +292,7 @@ func fetchPanel3Data() ([]interface{}, bool) {
 	params.Set("sColumns", ",,,,,,,,")
 	params.Set("iDisplayStart", "0")
 	params.Set("iDisplayLength", "25")
+	params.Set("_", timestamp) // کیشنگ سے بچنے کے لیے
 
 	for i := 0; i < 9; i++ {
 		idx := strconv.Itoa(i)
@@ -304,9 +316,9 @@ func fetchPanel3Data() ([]interface{}, bool) {
 
 	req, _ := http.NewRequest("GET", fetchURL, nil)
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Mobile Safari/537.36")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 10)")
 
-	resp, err := directAPIClient.Do(req)
+	resp, err := panel3Client.Do(req)
 	if err != nil {
 		return nil, false
 	}
@@ -326,30 +338,27 @@ func fetchPanel3Data() ([]interface{}, bool) {
 	return nil, true
 }
 
-
 // ================= API 2 (Number Panel API Direct) =================
 
 func fetchNumberPanelAPI() ([]interface{}, bool) {
 	now := time.Now()
 	dateStr := now.Format("2006-01-02")
+	timestamp := strconv.FormatInt(now.UnixNano()/1e6, 10) // Cache-buster
 
 	token := "R1dSSkdBUzRzhHFSf4SMh2FsUVyIZYpiU5GNYkp4aHNVUVVleJSRSA=="
-	fetchURL := fmt.Sprintf("http://147.135.212.197/crapi/st/viewstats?token=%s&dt1=%s%%2000:00:00&dt2=%s%%2023:59:59&records=50", token, dateStr, dateStr)
+	fetchURL := fmt.Sprintf("http://147.135.212.197/crapi/st/viewstats?token=%s&dt1=%s%%2000:00:00&dt2=%s%%2023:59:59&records=50&_=%s", token, dateStr, dateStr, timestamp)
 
 	req, _ := http.NewRequest("GET", fetchURL, nil)
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 10)")
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := apiClient.Do(req)
 	if err != nil {
-		fmt.Printf("❌ [API-Fetch Error]: %v\n", err)
 		return nil, false
 	}
 	defer resp.Body.Close()
 
 	var data [][]string
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		fmt.Printf("❌ [API-Parse Error]: %v\n", err)
 		return nil, false
 	}
 
@@ -406,6 +415,9 @@ func initSQLiteDB() {
 }
 
 func isAlreadySent(id string) bool {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
 	var exists bool
 	query := `SELECT EXISTS(SELECT 1 FROM sent_otps WHERE msg_id = ?)`
 	err := otpDB.QueryRow(query, id).Scan(&exists)
@@ -416,6 +428,9 @@ func isAlreadySent(id string) bool {
 }
 
 func markAsSent(id string) {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
 	query := `INSERT OR IGNORE INTO sent_otps (msg_id) VALUES (?)`
 	otpDB.Exec(query, id)
 }
@@ -476,11 +491,9 @@ func checkPanel1OTPs(cli *whatsmeow.Client) {
 			markAsSent(msgID)
 		}
 		isFirstRunPanel1 = false
-		fmt.Printf("✅ [Hadi-Boot] %d old messages cached.\n", len(aaData))
 		return
 	}
 
-	newMsgsCount := 0
 	for _, row := range aaData {
 		r, ok := row.([]interface{})
 		if !ok || len(r) < 6 { continue }
@@ -491,15 +504,9 @@ func checkPanel1OTPs(cli *whatsmeow.Client) {
 
 		if isAlreadySent(msgID) { continue }
 
-		newMsgsCount++
 		sendWhatsAppMessage(cli, r[0].(string), r[1].(string), r[2].(string), r[3].(string), r[5].(string), msgID, false, "H")
 	}
-
-	if newMsgsCount > 0 {
-		fmt.Printf("🎉 [Hadi] Processed %d NEW messages!\n", newMsgsCount)
-	}
 }
-
 
 // ================= Monitoring Loop (Panel 3 - Time SMS) =================
 
@@ -532,11 +539,9 @@ func checkPanel3OTPs(cli *whatsmeow.Client) {
 			markAsSent(msgID)
 		}
 		isFirstRunPanel3 = false
-		fmt.Printf("✅ [TimeSMS-Boot] %d old messages cached.\n", len(aaData))
 		return
 	}
 
-	newMsgsCount := 0
 	for _, row := range aaData {
 		r, ok := row.([]interface{})
 		if !ok || len(r) < 6 { continue }
@@ -547,15 +552,9 @@ func checkPanel3OTPs(cli *whatsmeow.Client) {
 
 		if isAlreadySent(msgID) { continue }
 
-		newMsgsCount++
 		sendWhatsAppMessage(cli, r[0].(string), r[1].(string), r[2].(string), r[3].(string), r[5].(string), msgID, false, "TS")
 	}
-
-	if newMsgsCount > 0 {
-		fmt.Printf("🎉 [TimeSMS] Processed %d NEW messages!\n", newMsgsCount)
-	}
 }
-
 
 // ================= Monitoring Loop (Number Panel API Direct) =================
 
@@ -586,11 +585,9 @@ func checkAPIOTPs(cli *whatsmeow.Client) {
 			markAsSent(msgID)
 		}
 		isFirstRunAPI = false
-		fmt.Printf("✅ [NP-Boot] %d old messages cached.\n", len(aaData))
 		return
 	}
 
-	newMsgsCount := 0
 	for _, row := range aaData {
 		r, ok := row.([]interface{})
 		if !ok || len(r) < 4 { continue }
@@ -605,12 +602,7 @@ func checkAPIOTPs(cli *whatsmeow.Client) {
 
 		if isAlreadySent(msgID) { continue }
 
-		newMsgsCount++
 		sendWhatsAppMessage(cli, rawTime, countryName, phone, service, fullMsg, msgID, false, "NP")
-	}
-
-	if newMsgsCount > 0 {
-		fmt.Printf("🎉 [NP] Processed %d NEW messages!\n", newMsgsCount)
 	}
 }
 
@@ -661,9 +653,12 @@ func sendWhatsAppMessage(cli *whatsmeow.Client, rawTime, countryRaw, phone, serv
 		jid, err := types.ParseJID(jidStr)
 		if err != nil { continue }
 
-		_, err = cli.SendMessage(context.Background(), jid, &waProto.Message{
+		// واٹس ایپ میسج کو بلاک ہونے سے بچانے کے لیے ٹائم آؤٹ
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		_, err = cli.SendMessage(ctx, jid, &waProto.Message{
 			Conversation: proto.String(strings.TrimSpace(messageBody)),
 		})
+		cancel()
 
 		if err != nil {
 			fmt.Printf("❌ [Send Error] %s: %v\n", phone, err)
@@ -845,7 +840,7 @@ func main() {
 
 	// دونوں پینلز میں لاگ ان
 	loginToPanel1()
-	loginToPanel3() // Time SMS Login
+	loginToPanel3()
 
 	dbURL := "file:/app/data/kami_session.db?_foreign_keys=on"
 	dbLog := waLog.Stdout("Database", "INFO", true)
@@ -865,33 +860,33 @@ func main() {
 		}
 	}
 
-	// ================= Panel 1 Loop (SMS Hadi) =================
+	// ================= Panel 1 Loop (SMS Hadi - 5 Seconds) =================
 	go func() {
 		for {
-			if client != nil && client.IsLoggedIn() {
+			if client != nil && client.IsConnected() && client.IsLoggedIn() {
 				checkPanel1OTPs(client)
 			}
 			time.Sleep(5 * time.Second)
 		}
 	}()
 
-	// ================= Panel 3 Loop (Time SMS) =================
+	// ================= Panel 3 Loop (Time SMS - 5 Seconds) =================
 	go func() {
 		for {
-			if client != nil && client.IsLoggedIn() {
+			if client != nil && client.IsConnected() && client.IsLoggedIn() {
 				checkPanel3OTPs(client)
 			}
 			time.Sleep(5 * time.Second)
 		}
 	}()
 
-	// ================= API Loop (Number Panel) =================
+	// ================= API Loop (Number Panel - 10 Seconds) =================
 	go func() {
 		for {
-			if client != nil && client.IsLoggedIn() {
+			if client != nil && client.IsConnected() && client.IsLoggedIn() {
 				checkAPIOTPs(client)
 			}
-			time.Sleep(5 * time.Second)
+			time.Sleep(10 * time.Second)
 		}
 	}()
 
