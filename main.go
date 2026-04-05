@@ -423,7 +423,7 @@ func getCountryFromPhone(phone string) string {
 
 func initSQLiteDB() {
 	var err error
-	otpDB, err = sql.Open("sqlite3", "file:/app/data/kami_session.db?_foreign_keys=on")
+	otpDB, err = sql.Open("sqlite3", "file:/app/data/kami.db?_foreign_keys=on")
 	if err != nil {
 		panic(fmt.Sprintf("❌ Failed to open SQLite DB: %v", err))
 	}
