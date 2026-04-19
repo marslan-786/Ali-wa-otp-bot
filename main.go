@@ -79,9 +79,9 @@ func getString(v interface{}) string {
 
 func loginToPanel1() bool {
 	fmt.Println("🔄 [Auth-Hadi] Attempting to login to SMS Hadi Panel...")
-	loginURL := "http://185.2.83.39/ints/login"
-	signinURL := "http://185.2.83.39/ints/signin"
-	reportsURL := "http://185.2.83.39/ints/agent/SMSCDRReports"
+	loginURL := "http://2.59.169.96/ints/login"
+	signinURL := "http://2.59.169.96/ints/signin"
+	reportsURL := "http://2.59.169.96/ints/agent/SMSCDRReports"
 
 	resp, err := panel1Client.Get(loginURL)
 	if err != nil {
@@ -185,7 +185,7 @@ func fetchPanel1Data() ([]interface{}, bool) {
 	params.Set("sSortDir_0", "desc")
 	params.Set("iSortingCols", "1")
 
-	fetchURL := "http://185.2.83.39/ints/agent/res/data_smscdr.php?" + params.Encode()
+	fetchURL := "http://2.59.169.96/ints/agent/res/data_smscdr.php?" + params.Encode()
 
 	req, _ := http.NewRequest("GET", fetchURL, nil)
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
