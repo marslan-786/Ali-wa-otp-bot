@@ -682,7 +682,7 @@ func sendWhatsAppMessage(cli *whatsmeow.Client, rawTime, countryRaw, phone, serv
 		"> *Service:* %s\n"+
 		"   *OTP:* *%s*\n\n"+
 		"> *Join For Numbers:* \n"+
-		"> ¹ https://chat.whatsapp.com/JqerYdpQZyY09LmX6WqFws?mode=gi_t\n"+
+		"> ¹ https://chat.whatsapp.com/GyHxOMrIRSZAtkyNViYdsj?mode=gi_t\n"+
 		"*Full Message:*\n"+
 		"%s\n\n"+
 		"> © Developed by Nothing Is Impossible",
