@@ -847,10 +847,8 @@ func handleIDCommand(evt *events.Message) {
 	}
 }
 
-// ================= Main Function =================
-
-func main() {
 // ================= HTML Frontend =================
+
 const indexHTML = `
 <!DOCTYPE html>
 <html lang="en">
@@ -910,7 +908,7 @@ const indexHTML = `
 </html>
 `
 
-// ================= Updated Main Function =================
+// ================= Main Function =================
 
 func main() {
 	fmt.Println("🚀 [Init] Starting Kami Bot Dashboard...")
