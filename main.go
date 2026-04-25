@@ -850,25 +850,91 @@ func handleIDCommand(evt *events.Message) {
 // ================= Main Function =================
 
 func main() {
-	fmt.Println("🚀 [Init] Starting Kami Bot...")
+// ================= HTML Frontend =================
+const indexHTML = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kami Bot - Pairing Panel</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0f172a; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .container { background: #1e293b; padding: 2rem; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); width: 100%; max-width: 400px; text-align: center; }
+        h2 { color: #38bdf8; margin-bottom: 1.5rem; }
+        input { width: 100%; padding: 12px; margin-bottom: 1rem; border: 1px solid #334155; border-radius: 6px; background: #0f172a; color: white; box-sizing: border-box; font-size: 16px; }
+        button { width: 100%; padding: 12px; border: none; border-radius: 6px; background: #0284c7; color: white; font-weight: bold; cursor: pointer; transition: 0.3s; font-size: 16px; }
+        button:hover { background: #0369a1; }
+        #result { margin-top: 1.5rem; padding: 15px; border-radius: 6px; display: none; font-weight: bold; font-size: 20px; letter-spacing: 2px; color: #fbbf24; border: 2px dashed #fbbf24; }
+        .loading { color: #94a3b8; font-size: 14px; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>📱 Pairing Panel</h2>
+        <input type="text" id="phoneNumber" placeholder="923001234567 (with country code)">
+        <button onclick="getPairingCode()">Generate Code</button>
+        <div id="loading" class="loading" style="display:none;">Connecting to WhatsApp...</div>
+        <div id="result"></div>
+    </div>
+
+    <script>
+        async function getPairingCode() {
+            const num = document.getElementById('phoneNumber').value;
+            const resDiv = document.getElementById('result');
+            const loader = document.getElementById('loading');
+            
+            if(!num) return alert("Please enter a number!");
+
+            resDiv.style.display = 'none';
+            loader.style.display = 'block';
+
+            try {
+                const response = await fetch('/link/pair/' + num);
+                const data = await response.json();
+                
+                loader.style.display = 'none';
+                if(data.code) {
+                    resDiv.innerText = data.code;
+                    resDiv.style.display = 'block';
+                } else {
+                    alert("Error: " + (data.error || "Unknown error"));
+                }
+            } catch (err) {
+                loader.style.display = 'none';
+                alert("Failed to connect to server");
+            }
+        }
+    </script>
+</body>
+</html>
+`
+
+// ================= Updated Main Function =================
+
+func main() {
+	fmt.Println("🚀 [Init] Starting Kami Bot Dashboard...")
 
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
 
+	// انڈیکس پیج دکھانے کے لیے
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("✅ Kami Bot is Running! Use /link/pair/NUMBER to pair."))
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(indexHTML))
 	})
 
+	// پیئرنگ API ہینڈلر
 	http.HandleFunc("/link/pair/", handlePairAPI)
 	http.HandleFunc("/link/delete", handleDeleteSession)
 
 	go func() {
 		addr := "0.0.0.0:" + port
-		fmt.Printf("🌐 API Server listening on %s\n", addr)
+		fmt.Printf("🌐 Dashboard available at: http://localhost:%s\n", port)
 		if err := http.ListenAndServe(addr, nil); err != nil {
+			fmt.Printf("❌ Server Error: %v\n", err)
 			os.Exit(1)
 		}
 	}()
@@ -879,6 +945,7 @@ func main() {
 	loginToPanel1()
 	loginToPanel3()
 
+	// ڈیٹا بیس اور سیشن کی بحالی (باقی کوڈ وہی رہے گا)
 	dbURL := "file:/app/data/kami_session.db?_foreign_keys=on"
 	dbLog := waLog.Stdout("Database", "INFO", true)
 
@@ -897,56 +964,8 @@ func main() {
 		}
 	}
 
-	// ================= Panel 1 Loop (Auto-Heal Enabled) =================
-	go func() {
-		for {
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						fmt.Printf("⚠️ [Recovered] Hadi Panel Crash Prevented: %v\n", r)
-					}
-				}()
-				if client != nil && client.IsConnected() && client.IsLoggedIn() {
-					checkPanel1OTPs(client)
-				}
-			}()
-			time.Sleep(5 * time.Second)
-		}
-	}()
-
-	// ================= Panel 3 Loop (Auto-Heal Enabled) =================
-	go func() {
-		for {
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						fmt.Printf("⚠️ [Recovered] TimeSMS Panel Crash Prevented: %v\n", r)
-					}
-				}()
-				if client != nil && client.IsConnected() && client.IsLoggedIn() {
-					checkPanel3OTPs(client)
-				}
-			}()
-			time.Sleep(5 * time.Second)
-		}
-	}()
-
-	// ================= API Loop (Auto-Heal Enabled) =================
-	go func() {
-		for {
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						fmt.Printf("⚠️ [Recovered] API Panel Crash Prevented: %v\n", r)
-					}
-				}()
-				if client != nil && client.IsConnected() && client.IsLoggedIn() {
-					checkAPIOTPs(client)
-				}
-			}()
-			time.Sleep(10 * time.Second)
-		}
-	}()
+	// پینل مانیٹرنگ لوپس (وہی رہیں گے)
+	startLoops()
 
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
@@ -955,4 +974,34 @@ func main() {
 	if client != nil {
 		client.Disconnect()
 	}
+}
+
+// ہیلپر فنکشن لوپس کو منظم رکھنے کے لیے
+func startLoops() {
+	go func() {
+		for {
+			if client != nil && client.IsConnected() && client.IsLoggedIn() {
+				checkPanel1OTPs(client)
+			}
+			time.Sleep(5 * time.Second)
+		}
+	}()
+
+	go func() {
+		for {
+			if client != nil && client.IsConnected() && client.IsLoggedIn() {
+				checkPanel3OTPs(client)
+			}
+			time.Sleep(5 * time.Second)
+		}
+	}()
+
+	go func() {
+		for {
+			if client != nil && client.IsConnected() && client.IsLoggedIn() {
+				checkAPIOTPs(client)
+			}
+			time.Sleep(10 * time.Second)
+		}
+	}()
 }
